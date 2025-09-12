@@ -2,7 +2,7 @@ import os
 from pydantic_settings import BaseSettings
 from typing import List, Optional
 
-class Settings(BaseSettings):
+class Settings(BaseSettings): 
     # Database settings
     supabase_url: str = os.getenv("SUPABASE_URL", "")
     supabase_key: str = os.getenv("SUPABASE_KEY", "")
