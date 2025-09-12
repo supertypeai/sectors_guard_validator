@@ -6,7 +6,6 @@ from dotenv import load_dotenv
 
 from app.api.routes import validation_router, dashboard_router
 from app.database.connection import init_database
-from app.config import settings
 
 # Load environment variables
 load_dotenv()
@@ -18,10 +17,23 @@ app = FastAPI(
     version="1.0.0"
 )
 
+# Resolve frontend URL and CORS origins from environment
+DEFAULT_ORIGINS = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
+
+FRONTEND_URL = os.getenv("FRONTEND_URL", DEFAULT_ORIGINS[0])
+
+if os.getenv("CORS_ORIGINS"):
+    ALLOW_ORIGINS = [o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()]
+else:
+    ALLOW_ORIGINS = list(dict.fromkeys([FRONTEND_URL, *DEFAULT_ORIGINS]))
+
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins,
+    allow_origins=ALLOW_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -45,6 +57,13 @@ async def startup_event():
         print(f"⚠️  Database initialization error: {e}")
         print("📝 App will start without database connection")
 
+    # Debug: print frontend URL / CORS origins on startup
+    try:
+        print(f"🔧 FRONTEND_URL = {FRONTEND_URL}")
+        print(f"🔧 CORS_ORIGINS = {ALLOW_ORIGINS}")
+    except Exception as e:
+        print(f"⚠️  Could not read settings: {e}")
+
 @app.get("/")
 async def root():
     return {"message": "Sectors Guard API", "version": "1.0.0"}
@@ -52,6 +71,20 @@ async def root():
 @app.get("/health")
 async def health_check():
     return {"status": "healthy"}
+
+
+@app.get("/debug-config")
+async def debug_config():
+    """Return configuration values useful for debugging environment and CORS."""
+    try:
+        return {
+            "frontend_url": FRONTEND_URL,
+            "cors_origins": ALLOW_ORIGINS,
+            "env_frontend_url": os.getenv("FRONTEND_URL"),
+            "env_cors_origins": os.getenv("CORS_ORIGINS"),
+        }
+    except Exception as e:
+        return {"error": str(e)}
 
 if __name__ == "__main__":
     import uvicorn
