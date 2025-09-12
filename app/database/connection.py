@@ -19,7 +19,7 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # SQLAlchemy configuration for direct database access
-DATABASE_URL = f"postgresql://postgres:{os.getenv('DB_PASSWORD', '')}@{SUPABASE_URL.replace('https://', '').replace('.supabase.co', '')}.supabase.co:5432/postgres"
+DATABASE_URL = f"postgresql://postgres:{os.getenv('DB_PASSWORD') or os.getenv('PASSWORD', '')}@{SUPABASE_URL.replace('https://', '').replace('.supabase.co', '')}.supabase.co:5432/postgres"
 
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -37,6 +37,11 @@ def get_db():
 def init_database():
     """Initialize database connection"""
     try:
+        # Check required environment variables
+        if not SUPABASE_URL or not SUPABASE_KEY:
+            print("❌ Missing required environment variables: SUPABASE_URL, SUPABASE_KEY")
+            return False
+            
         # Test Supabase connection
         result = supabase.table('idx_dividend').select("*").limit(1).execute()
         print("✅ Supabase connection successful")

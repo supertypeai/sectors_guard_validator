@@ -37,7 +37,16 @@ app.include_router(dashboard_router, prefix="/api/dashboard", tags=["dashboard"]
 @app.on_event("startup")
 async def startup_event():
     """Initialize database connection on startup"""
-    init_database()
+    try:
+        print("🚀 Starting IDX Data Validation Dashboard...")
+        success = init_database()
+        if success:
+            print("✅ Database connection initialized successfully")
+        else:
+            print("⚠️  Database connection failed, but app will continue")
+    except Exception as e:
+        print(f"⚠️  Database initialization error: {e}")
+        print("📝 App will start without database connection")
 
 @app.get("/")
 async def root():
