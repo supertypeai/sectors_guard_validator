@@ -33,9 +33,14 @@ class Settings(BaseSettings):
     debug: bool = os.getenv("DEBUG", "False").lower() == "true"
     
     # CORS settings
+    # Primary frontend URL (can be a single origin)
+    frontend_url: str = os.getenv("FRONTEND_URL", "http://localhost:3000")
+
+    # Additional CORS origins (comma-separated) or defaults
     cors_origins: List[str] = [
         "http://localhost:3000",
         "http://127.0.0.1:3000",
+        "https://sectors-guard.vercel.app"
     ]
     
     def __init__(self, **kwargs):
@@ -57,6 +62,15 @@ class Settings(BaseSettings):
         # Set from_email to smtp_username if not specified
         if not self.from_email and self.smtp_username:
             self.from_email = self.smtp_username
+        if os.getenv("CORS_ORIGINS"):
+            self.cors_origins = [
+                origin.strip() for origin in os.getenv("CORS_ORIGINS", "").split(",")
+                if origin.strip()
+            ]
+        else:
+            # Ensure frontend_url is present in cors_origins and at the front
+            if self.frontend_url and self.frontend_url not in self.cors_origins:
+                self.cors_origins.insert(0, self.frontend_url)
     
     class Config:
         env_file = ".env"

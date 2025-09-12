@@ -35,6 +35,8 @@ Email (optional but recommended):
 General:
 - PORT (default local 8000; on Fly set to 8080 via `fly.toml`)
 - DEBUG (true/false)
+ - FRONTEND_URL (default: http://localhost:3000) — primary frontend origin used by the backend when composing links or configuring CORS
+ - CORS_ORIGINS (optional, comma-separated) — additional allowed origins for CORS; if set it overrides the default origins list
 
 ## API endpoints
 Base path: `/`

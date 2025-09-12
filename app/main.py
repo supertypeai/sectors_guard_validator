@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 
 from app.api.routes import validation_router, dashboard_router
 from app.database.connection import init_database
+from app.config import settings
 
 # Load environment variables
 load_dotenv()
@@ -20,7 +21,7 @@ app = FastAPI(
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],  # React dev server
+    allow_origins=settings.cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
