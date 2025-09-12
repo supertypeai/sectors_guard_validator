@@ -1,0 +1,122 @@
+name: Deploy to Production
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  NODE_VERSION: '18'
+  PYTHON_VERSION: '3.11'
+
+jobs:
+  test-backend:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+    
+    - name: Install backend dependencies
+      run: |
+        cd backend
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest pytest-asyncio
+    
+    - name: Run backend tests
+      run: |
+        cd backend
+        python -m pytest tests/ -v
+
+  test-frontend:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+        cache-dependency-path: frontend/package-lock.json
+    
+    - name: Install frontend dependencies
+      run: |
+        cd frontend
+        npm ci
+    
+    - name: Run frontend tests
+      run: |
+        cd frontend
+        npm test -- --coverage --watchAll=false
+    
+    - name: Build frontend
+      run: |
+        cd frontend
+        npm run build
+
+  build-and-deploy:
+    needs: [test-backend, test-frontend]
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    # Build frontend
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+        cache-dependency-path: frontend/package-lock.json
+    
+    - name: Install and build frontend
+      run: |
+        cd frontend
+        npm ci
+        npm run build
+    
+    # Build backend
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+    
+    - name: Create deployment package
+      run: |
+        mkdir -p deployment
+        cp -r backend deployment/
+        cp -r frontend/build deployment/static
+        cp .env.example deployment/.env.example
+        
+        # Create deployment script
+        cat > deployment/start.sh << EOF
+        #!/bin/bash
+        cd backend
+        pip install -r requirements.txt
+        python main.py
+        EOF
+        chmod +x deployment/start.sh
+    
+    - name: Upload deployment artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: deployment-package
+        path: deployment/
+        retention-days: 30
+    
+    # Add your deployment steps here
+    # For example, deploy to your cloud provider, update Docker containers, etc.
+    
+    - name: Deployment notification
+      if: success()
+      run: |
+        echo "🚀 Deployment completed successfully!"
+        echo "Frontend: Built and ready for static hosting"
+        echo "Backend: Ready for deployment to your server"

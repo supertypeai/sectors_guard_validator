@@ -1,7 +1,3 @@
-"""
-IDX Data Validation Backend Application
-"""
-
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -16,7 +12,7 @@ load_dotenv()
 
 # Create FastAPI app
 app = FastAPI(
-    title="IDX Data Validation Dashboard",
+    title="Sector Guards",
     description="A dashboard for data validation with automated anomaly detection and email notifications",
     version="1.0.0"
 )
@@ -38,7 +34,7 @@ app.include_router(dashboard_router, prefix="/api/dashboard", tags=["dashboard"]
 async def startup_event():
     """Initialize database connection on startup"""
     try:
-        print("🚀 Starting IDX Data Validation Dashboard...")
+        print("🚀 Starting Sector Guards...")
         success = init_database()
         if success:
             print("✅ Database connection initialized successfully")
@@ -50,7 +46,7 @@ async def startup_event():
 
 @app.get("/")
 async def root():
-    return {"message": "IDX Data Validation Dashboard API", "version": "1.0.0"}
+    return {"message": "Sectors Guard API", "version": "1.0.0"}
 
 @app.get("/health")
 async def health_check():

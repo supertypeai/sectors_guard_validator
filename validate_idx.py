@@ -1,9 +1,3 @@
-#!/usr/bin/env python3
-"""
-IDX Data Validation Runner
-Standalone script to validate IDX financial tables
-"""
-
 import asyncio
 import sys
 import os

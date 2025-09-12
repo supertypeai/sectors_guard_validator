@@ -32,7 +32,7 @@ class EmailService:
                 return False
             
             # Generate email content
-            subject = f"🚨 IDX Data Validation Alert: {table_name} - {validation_results.get('anomalies_count', 0)} anomalies detected"
+            subject = f"🚨 Data Validation Alert: {table_name} - {validation_results.get('anomalies_count', 0)} anomalies detected"
             html_body = self._generate_html_email(table_name, validation_results)
             text_body = self._generate_text_email(table_name, validation_results)
             
@@ -138,7 +138,7 @@ class EmailService:
             </div>
             
             <div class="footer">
-                <p>This is an automated message from the IDX Data Validation Dashboard.</p>
+                <p>This is an automated message from the Sectors Guard.</p>
                 <p>Generated on {{ current_time }}</p>
             </div>
         </body>
@@ -191,7 +191,7 @@ NEXT STEPS:
 3. Investigate the root cause of the data quality issues
 4. Take appropriate corrective actions
 
-This is an automated message from the IDX Data Validation Dashboard.
+This is an automated message from the Sectors Guard.
 Generated on {datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC")}
 """
         
@@ -340,6 +340,6 @@ TABLE STATUS SUMMARY:
         for table in summary_data.get('table_summaries', []):
             text += f"\n- {table.get('name', '')}: {table.get('status', '').upper()} ({table.get('anomalies', 0)} anomalies)"
         
-        text += "\n\nThis is an automated daily summary from the IDX Data Validation Dashboard."
+        text += "\n\nThis is an automated daily summary from the Sectors Guard."
         
         return text

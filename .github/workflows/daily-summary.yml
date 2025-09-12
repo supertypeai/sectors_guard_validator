@@ -1,0 +1,170 @@
+name: Daily Summary Report
+
+on:
+  schedule:
+    # Run daily at 8 AM UTC
+    - cron: '0 8 * * *'
+  workflow_dispatch: # Allow manual triggering
+
+env:
+  PYTHON_VERSION: '3.11'
+
+jobs:
+  daily-summary:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+
+    - name: Install Python dependencies
+      run: |
+        cd backend
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Set up environment variables
+      run: |
+        echo "JWT_SECRET=${{ secrets.JWT_SECRET }}" >> $GITHUB_ENV
+        echo "PASSWORD=${{ secrets.PASSWORD }}" >> $GITHUB_ENV
+        echo "SUPABASE_URL=${{ secrets.SUPABASE_URL }}" >> $GITHUB_ENV
+        echo "SUPABASE_KEY=${{ secrets.SUPABASE_KEY }}" >> $GITHUB_ENV
+        echo "DAILY_SUMMARY_RECIPIENTS=${{ secrets.DAILY_SUMMARY_RECIPIENTS }}" >> $GITHUB_ENV
+
+    - name: Generate and send daily summary
+      run: |
+        cd backend
+        python -c "
+        import asyncio
+        import sys
+        from datetime import datetime, timedelta
+        sys.path.append('.')
+        
+        from app.notifications.email_service import EmailService
+        from app.database.connection import get_supabase_client
+        
+        async def generate_daily_summary():
+            try:
+                supabase = get_supabase_client()
+                email_service = EmailService()
+                
+                # Calculate date range for yesterday
+                today = datetime.utcnow().date()
+                yesterday = today - timedelta(days=1)
+                
+                print(f'Generating daily summary for {yesterday}')
+                
+                # Query validation results from yesterday
+                try:
+                    response = supabase.table('validation_results').select('*').gte('created_at', yesterday.isoformat()).lt('created_at', today.isoformat()).execute()
+                    daily_results = response.data if response.data else []
+                except Exception as e:
+                    print(f'Error querying validation results: {e}')
+                    daily_results = []
+                
+                # Query email logs from yesterday
+                try:
+                    email_response = supabase.table('email_logs').select('*').gte('sent_at', yesterday.isoformat()).lt('sent_at', today.isoformat()).execute()
+                    email_logs = email_response.data if email_response.data else []
+                except Exception as e:
+                    print(f'Error querying email logs: {e}')
+                    email_logs = []
+                
+                # Calculate summary statistics
+                total_validations = len(daily_results)
+                tables_validated = len(set([r['table_name'] for r in daily_results]))
+                total_anomalies = sum([r.get('anomalies_count', 0) for r in daily_results])
+                emails_sent = len([e for e in email_logs if e.get('status') == 'sent'])
+                
+                # Create table summaries
+                table_summaries = {}
+                for result in daily_results:
+                    table_name = result['table_name']
+                    if table_name not in table_summaries:
+                        table_summaries[table_name] = {
+                            'name': table_name,
+                            'status': result['status'],
+                            'anomalies': result.get('anomalies_count', 0),
+                            'last_validated': result['created_at']
+                        }
+                    else:
+                        # Keep the latest result
+                        if result['created_at'] > table_summaries[table_name]['last_validated']:
+                            table_summaries[table_name].update({
+                                'status': result['status'],
+                                'anomalies': result.get('anomalies_count', 0),
+                                'last_validated': result['created_at']
+                            })
+                
+                # Prepare summary data
+                summary_data = {
+                    'date': yesterday.strftime('%Y-%m-%d'),
+                    'total_validations': total_validations,
+                    'tables_validated': tables_validated,
+                    'total_anomalies': total_anomalies,
+                    'emails_sent': emails_sent,
+                    'table_summaries': list(table_summaries.values())
+                }
+                
+                # Send daily summary email
+                success = await email_service.send_daily_summary(summary_data)
+                
+                if success:
+                    print('Daily summary email sent successfully')
+                else:
+                    print('Failed to send daily summary email')
+                
+                # Print summary to console
+                print(f'\\n=== Daily Summary for {yesterday} ===')
+                print(f'Total validations: {total_validations}')
+                print(f'Tables validated: {tables_validated}')
+                print(f'Total anomalies: {total_anomalies}')
+                print(f'Emails sent: {emails_sent}')
+                
+                for table_summary in table_summaries.values():
+                    status_emoji = '✅' if table_summary['status'] == 'success' else '⚠️' if table_summary['status'] == 'warning' else '❌'
+                    print(f'{status_emoji} {table_summary[\"name\"]}: {table_summary[\"status\"]} ({table_summary[\"anomalies\"]} anomalies)')
+                
+            except Exception as e:
+                print(f'::error::Error generating daily summary: {str(e)}')
+                sys.exit(1)
+        
+        asyncio.run(generate_daily_summary())
+        "
+
+    - name: Create summary artifact
+      if: always()
+      run: |
+        cd backend
+        python -c "
+        import json
+        from datetime import datetime, timedelta
+        
+        yesterday = (datetime.utcnow().date() - timedelta(days=1)).isoformat()
+        
+        summary_artifact = {
+            'date': yesterday,
+            'timestamp': datetime.utcnow().isoformat(),
+            'workflow_run': '${{ github.run_id }}',
+            'status': 'completed',
+            'type': 'daily_summary'
+        }
+        
+        with open('daily_summary_artifact.json', 'w') as f:
+            json.dump(summary_artifact, f, indent=2)
+        
+        print('Daily summary artifact created')
+        "
+
+    - name: Upload summary artifact
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: daily-summary-${{ github.run_id }}
+        path: backend/daily_summary_artifact.json
+        retention-days: 30

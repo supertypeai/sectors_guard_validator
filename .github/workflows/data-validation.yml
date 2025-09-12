@@ -1,0 +1,319 @@
+name: IDX Data Validation Schedules
+
+on:
+  schedule:
+    # Annual financials - Every January 1st at 2 AM UTC
+    - cron: '0 2 1 1 *'
+    # Quarterly financials - Every 1st of quarter (Jan, Apr, Jul, Oct) at 3 AM UTC  
+    - cron: '0 3 1 1,4,7,10 *'
+    # Daily data - Every Monday at 1 AM UTC
+    - cron: '0 1 * * 1'
+    # Dividend - Every 1st of month at 4 AM UTC
+    - cron: '0 4 1 * *'
+    # All-time price - Every January 1st at 5 AM UTC
+    - cron: '0 5 1 1 *'
+    # Filings - Every 1st of quarter at 6 AM UTC
+    - cron: '0 6 1 1,4,7,10 *'
+    # Stock split - Every 1st of Jan and Jul (6 months) at 7 AM UTC
+    - cron: '0 7 1 1,7 *'
+  workflow_dispatch:
+    inputs:
+      validation_type:
+        description: 'Choose validation type to run'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - 'all'
+          - 'annual'
+          - 'quarterly' 
+          - 'daily'
+          - 'dividend'
+          - 'alltime'
+          - 'filings'
+          - 'stocksplit'
+
+env:
+  PYTHON_VERSION: '3.11'
+
+jobs:
+  determine-validation-type:
+    runs-on: ubuntu-latest
+    outputs:
+      validation_tables: ${{ steps.determine.outputs.validation_tables }}
+      
+    steps:
+    - name: Determine which validations to run
+      id: determine
+      run: |
+        # Get current date info
+        month=$(date +%m)
+        day=$(date +%d)
+        weekday=$(date +%u)  # 1=Monday, 7=Sunday
+        
+        # Manual trigger
+        if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          case "${{ github.event.inputs.validation_type }}" in
+            "annual")
+              echo "validation_tables=idx_combine_financials_annual" >> $GITHUB_OUTPUT
+              ;;
+            "quarterly")
+              echo "validation_tables=idx_combine_financials_quarterly" >> $GITHUB_OUTPUT
+              ;;
+            "daily")
+              echo "validation_tables=idx_daily_data" >> $GITHUB_OUTPUT
+              ;;
+            "dividend")
+              echo "validation_tables=idx_dividend" >> $GITHUB_OUTPUT
+              ;;
+            "alltime")
+              echo "validation_tables=idx_all_time_price" >> $GITHUB_OUTPUT
+              ;;
+            "filings")
+              echo "validation_tables=idx_filings" >> $GITHUB_OUTPUT
+              ;;
+            "stocksplit")
+              echo "validation_tables=idx_stock_split" >> $GITHUB_OUTPUT
+              ;;
+            "all")
+              echo "validation_tables=idx_combine_financials_annual,idx_combine_financials_quarterly,idx_daily_data,idx_dividend,idx_all_time_price,idx_filings,idx_stock_split" >> $GITHUB_OUTPUT
+              ;;
+          esac
+        else
+          # Scheduled trigger - determine based on schedule
+          hour=$(date +%H)
+          case $hour in
+            2)  # 2 AM - Annual (Jan 1)
+              if [ "$month" = "01" ] && [ "$day" = "01" ]; then
+                echo "validation_tables=idx_combine_financials_annual" >> $GITHUB_OUTPUT
+              fi
+              ;;
+            3)  # 3 AM - Quarterly (Jan, Apr, Jul, Oct 1st)
+              if [ "$day" = "01" ] && ([ "$month" = "01" ] || [ "$month" = "04" ] || [ "$month" = "07" ] || [ "$month" = "10" ]); then
+                echo "validation_tables=idx_combine_financials_quarterly" >> $GITHUB_OUTPUT
+              fi
+              ;;
+            1)  # 1 AM - Daily (Mondays)
+              if [ "$weekday" = "1" ]; then
+                echo "validation_tables=idx_daily_data" >> $GITHUB_OUTPUT
+              fi
+              ;;
+            4)  # 4 AM - Dividend (1st of month)
+              if [ "$day" = "01" ]; then
+                echo "validation_tables=idx_dividend" >> $GITHUB_OUTPUT
+              fi
+              ;;
+            5)  # 5 AM - All-time price (Jan 1)
+              if [ "$month" = "01" ] && [ "$day" = "01" ]; then
+                echo "validation_tables=idx_all_time_price" >> $GITHUB_OUTPUT
+              fi
+              ;;
+            6)  # 6 AM - Filings (quarterly)
+              if [ "$day" = "01" ] && ([ "$month" = "01" ] || [ "$month" = "04" ] || [ "$month" = "07" ] || [ "$month" = "10" ]); then
+                echo "validation_tables=idx_filings" >> $GITHUB_OUTPUT
+              fi
+              ;;
+            7)  # 7 AM - Stock split (Jan, Jul 1st)
+              if [ "$day" = "01" ] && ([ "$month" = "01" ] || [ "$month" = "07" ]); then
+                echo "validation_tables=idx_stock_split" >> $GITHUB_OUTPUT
+              fi
+              ;;
+          esac
+        fi
+        
+        # Fallback if nothing determined
+        if [ -z "$validation_tables" ]; then
+          echo "validation_tables=none" >> $GITHUB_OUTPUT
+        fi
+
+  data-validation:
+    needs: determine-validation-type
+    runs-on: ubuntu-latest
+    if: needs.determine-validation-type.outputs.validation_tables != 'none'
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+
+    - name: Cache Python dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('backend/requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+
+    - name: Install Python dependencies
+      run: |
+        cd backend
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Set up environment variables
+      run: |
+        echo "JWT_SECRET=${{ secrets.JWT_SECRET }}" >> $GITHUB_ENV
+        echo "PASSWORD=${{ secrets.PASSWORD }}" >> $GITHUB_ENV
+        echo "SUPABASE_URL=${{ secrets.SUPABASE_URL }}" >> $GITHUB_ENV
+        echo "SUPABASE_KEY=${{ secrets.SUPABASE_KEY }}" >> $GITHUB_ENV
+        echo "DEFAULT_EMAIL_RECIPIENTS=${{ secrets.DEFAULT_EMAIL_RECIPIENTS }}" >> $GITHUB_ENV
+
+    - name: Run data validation for selected tables
+      env:
+        TABLES_TO_VALIDATE: ${{ needs.determine-validation-type.outputs.validation_tables }}
+      run: |
+        cd backend
+        python -c "
+        import asyncio
+        import sys
+        import os
+        sys.path.append('.')
+        
+        from app.validators.idx_financial_validator import IDXFinancialValidator
+        from app.notifications.email_service import EmailService
+        from app.database.connection import get_supabase_client
+        
+        async def run_validations():
+            try:
+                # Get tables to validate from environment
+                tables_env = os.getenv('TABLES_TO_VALIDATE', '')
+                if not tables_env or tables_env == 'none':
+                    print('No tables to validate.')
+                    return
+                
+                tables_to_validate = [t.strip() for t in tables_env.split(',') if t.strip()]
+                print(f'Tables to validate: {tables_to_validate}')
+                
+                validator = IDXFinancialValidator()
+                email_service = EmailService()
+                
+                total_anomalies = 0
+                results_summary = []
+                
+                for table_name in tables_to_validate:
+                    print(f'\\n🔍 Validating table: {table_name}')
+                    
+                    try:
+                        result = await validator.validate_table(table_name)
+                        anomalies_count = result.get('anomalies_count', 0)
+                        total_anomalies += anomalies_count
+                        
+                        results_summary.append({
+                            'table': table_name,
+                            'status': result.get('status', 'unknown'),
+                            'anomalies': anomalies_count,
+                            'validation_timestamp': result.get('validation_timestamp')
+                        })
+                        
+                        # Send email if anomalies detected
+                        if anomalies_count > 0:
+                            await email_service.send_anomaly_alert(table_name, result)
+                            print(f'📧 Anomaly alert sent for {table_name}: {anomalies_count} anomalies')
+                        else:
+                            print(f'✅ No anomalies found in {table_name}')
+                            
+                    except Exception as e:
+                        print(f'❌ Error validating {table_name}: {str(e)}')
+                        results_summary.append({
+                            'table': table_name,
+                            'status': 'error',
+                            'anomalies': 0,
+                            'error': str(e)
+                        })
+                
+                # Print summary
+                print(f'\\n=== 📊 Validation Summary ===')
+                print(f'Tables validated: {len(tables_to_validate)}')
+                print(f'Total anomalies detected: {total_anomalies}')
+                
+                for result in results_summary:
+                    status_emoji = '✅' if result['status'] == 'success' else '⚠️' if result['status'] == 'warning' else '❌'
+                    print(f'{status_emoji} {result[\"table\"]}: {result[\"status\"]} ({result[\"anomalies\"]} anomalies)')
+                
+                # Set GitHub Actions output for notifications
+                if total_anomalies > 0:
+                    print(f'::warning::Found {total_anomalies} anomalies across {len([r for r in results_summary if r[\"anomalies\"] > 0])} tables')
+                else:
+                    print(f'::notice::All validations completed successfully with no anomalies detected')
+                
+                # Save results for artifact
+                import json
+                with open('validation_results.json', 'w') as f:
+                    json.dump({
+                        'summary': {
+                            'total_tables': len(tables_to_validate),
+                            'total_anomalies': total_anomalies,
+                            'tables_with_anomalies': len([r for r in results_summary if r['anomalies'] > 0])
+                        },
+                        'results': results_summary,
+                        'timestamp': result.get('validation_timestamp') if results_summary else None
+                    }, f, indent=2)
+                
+            except Exception as e:
+                print(f'::error::Critical error during validation: {str(e)}')
+                sys.exit(1)
+        
+        asyncio.run(run_validations())
+        "
+
+    - name: Create validation report
+      if: always()
+      run: |
+        cd backend
+        python -c "
+        import json
+        from datetime import datetime
+        import os
+        
+        # Create a comprehensive validation report
+        report = {
+            'workflow_info': {
+                'timestamp': datetime.utcnow().isoformat(),
+                'workflow_run': '${{ github.run_id }}',
+                'workflow_name': '${{ github.workflow }}',
+                'event_name': '${{ github.event_name }}',
+                'repository': '${{ github.repository }}',
+                'branch': '${{ github.ref_name }}',
+                'commit_sha': '${{ github.sha }}'
+            },
+            'validation_config': {
+                'tables_to_validate': os.getenv('TABLES_TO_VALIDATE', 'none'),
+                'trigger_type': '${{ github.event_name }}',
+                'manual_input': '${{ github.event.inputs.validation_type }}' if '${{ github.event_name }}' == 'workflow_dispatch' else 'scheduled'
+            },
+            'status': 'completed'
+        }
+        
+        # Try to merge with validation results if exists
+        try:
+            with open('validation_results.json', 'r') as f:
+                validation_results = json.load(f)
+                report['validation_results'] = validation_results
+        except FileNotFoundError:
+            report['validation_results'] = {'summary': {'total_tables': 0, 'total_anomalies': 0}, 'results': []}
+        
+        with open('validation_report.json', 'w') as f:
+            json.dump(report, f, indent=2)
+        
+        print('📄 Validation report created')
+        "
+
+    - name: Upload validation report
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: validation-report-${{ github.run_id }}
+        path: |
+          backend/validation_report.json
+          backend/validation_results.json
+        retention-days: 30
+        if-no-files-found: warn
+
+    - name: Notify on failure
+      if: failure()
+      run: |
+        echo "::error::Data validation workflow failed. Please check the logs and investigate."
