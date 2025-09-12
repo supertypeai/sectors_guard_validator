@@ -1,0 +1,10 @@
+Dockerfile
+.dockerignore
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+.pytest_cache
+validation_results_local/
+br/

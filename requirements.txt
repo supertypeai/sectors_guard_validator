@@ -1,0 +1,40 @@
+# Core framework
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+gunicorn==21.2.0
+
+# Database and ORM
+supabase==2.0.3
+sqlalchemy==2.0.23
+psycopg2-binary==2.9.9
+
+# Data manipulation and validation
+pandas==2.1.4
+numpy==1.25.2
+pydantic==2.5.1
+pandera==0.17.2
+
+# Visualization and analysis
+plotly==5.17.0
+seaborn==0.13.0
+matplotlib==3.8.2
+scipy==1.11.4
+
+# Email notifications
+jinja2==3.1.2
+
+# Environment and configuration
+python-dotenv==1.0.0
+pydantic-settings==2.1.0
+
+# Utilities
+requests==2.31.0
+schedule==1.2.0
+
+# Testing
+pytest==7.4.3
+pytest-asyncio==0.21.1
+httpx==0.24.1
+
+# CORS middleware
+python-multipart==0.0.6
