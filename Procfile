@@ -1,1 +1,1 @@
-web: gunicorn periwatch_api.wsgi:application --bind 0.0.0.0:8080 --timeout 60
+web: gunicorn -k uvicorn.workers.UvicornWorker -w 2 app.main:app --bind 0.0.0.0:$PORT --timeout 60
