@@ -3,7 +3,6 @@ API routes for validation and dashboard endpoints
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import JSONResponse
 from typing import List, Dict, Any, Optional
 import json
 from datetime import datetime
@@ -102,29 +101,10 @@ async def run_validation(
             email_service = EmailService()
             await email_service.send_anomaly_alert(table_name, result)
         
-        # Return with explicit CORS headers
-        return JSONResponse(
-            content=result,
-            headers={
-                "Access-Control-Allow-Origin": "*",
-                "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-                "Access-Control-Allow-Headers": "*",
-                "Access-Control-Allow-Credentials": "true",
-            }
-        )
+        return result
     except Exception as e:
         print(f"❌ [API] Error running validation for {table_name}: {str(e)}")
-        # Return error with CORS headers
-        return JSONResponse(
-            content={"detail": str(e)},
-            status_code=500,
-            headers={
-                "Access-Control-Allow-Origin": "*",
-                "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-                "Access-Control-Allow-Headers": "*",
-                "Access-Control-Allow-Credentials": "true",
-            }
-        )
+        raise HTTPException(status_code=500, detail=str(e))
 
 @validation_router.post("/run-all")
 async def run_all_validations(
