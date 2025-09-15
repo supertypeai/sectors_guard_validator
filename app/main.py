@@ -1,6 +1,7 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.middleware.base import BaseHTTPMiddleware
 import os
 from dotenv import load_dotenv
 
@@ -9,6 +10,32 @@ from app.database.connection import init_database
 
 # Load environment variables
 load_dotenv()
+
+class ExplicitCORSMiddleware(BaseHTTPMiddleware):
+    """Explicit CORS middleware to ensure headers are always set"""
+    
+    def __init__(self, app, allowed_origins):
+        super().__init__(app)
+        self.allowed_origins = allowed_origins
+    
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        
+        # Get origin from request
+        origin = request.headers.get("origin")
+        
+        # Set CORS headers explicitly
+        if origin in self.allowed_origins or "*" in self.allowed_origins:
+            response.headers["Access-Control-Allow-Origin"] = origin
+        else:
+            response.headers["Access-Control-Allow-Origin"] = "*"
+            
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, HEAD, PATCH"
+        response.headers["Access-Control-Allow-Headers"] = "*"
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+        response.headers["Access-Control-Max-Age"] = "3600"
+        
+        return response
 
 # Create FastAPI app
 app = FastAPI(
@@ -56,6 +83,9 @@ app.add_middleware(
     expose_headers=["*"],
     max_age=3600,
 )
+
+# Add explicit CORS middleware as backup
+app.add_middleware(ExplicitCORSMiddleware, allowed_origins=ALLOW_ORIGINS + ["*"])
 
 # Include routers
 app.include_router(validation_router, prefix="/api/validation", tags=["validation"])
@@ -113,9 +143,24 @@ async def debug_config():
             "cors_origins": ALLOW_ORIGINS,
             "env_frontend_url": os.getenv("FRONTEND_URL"),
             "env_cors_origins": os.getenv("CORS_ORIGINS"),
+            "env_port": os.getenv("PORT"),
+            "production_frontend": PRODUCTION_FRONTEND,
+            "default_origins": DEFAULT_ORIGINS,
         }
     except Exception as e:
         return {"error": str(e)}
+
+@app.get("/cors-test")
+async def cors_test():
+    """Simple endpoint to test CORS functionality"""
+    return JSONResponse(
+        content={"message": "CORS test successful", "timestamp": "2025-09-15"},
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+            "Access-Control-Allow-Headers": "*",
+        }
+    )
 
 if __name__ == "__main__":
     import uvicorn
