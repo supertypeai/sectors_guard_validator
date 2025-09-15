@@ -13,5 +13,17 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the rest of the application's code into the container at /app
 COPY . .
 
-# Command to run the application
-CMD ["gunicorn", "-w", "4", "-k", "uvicorn.workers.UvicornWorker", "app.main:app", "--bind", "0.0.0.0:8080"]
+# Command to run the application with increased timeouts for long-running validations
+# Note: using shell-form so env vars expand
+ENV WEB_CONCURRENCY=4 \
+		GUNICORN_TIMEOUT=300 \
+		GUNICORN_GRACEFUL_TIMEOUT=60 \
+		GUNICORN_KEEP_ALIVE=5
+
+CMD gunicorn -w ${WEB_CONCURRENCY} -k uvicorn.workers.UvicornWorker \
+		--bind 0.0.0.0:8080 \
+		--timeout ${GUNICORN_TIMEOUT} \
+		--graceful-timeout ${GUNICORN_GRACEFUL_TIMEOUT} \
+		--keep-alive ${GUNICORN_KEEP_ALIVE} \
+		--log-level info \
+		app.main:app
