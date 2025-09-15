@@ -150,7 +150,7 @@ async def debug_config():
     except Exception as e:
         return {"error": str(e)}
 
-@app.get("/cors-test")
+@app.get("/cors-test") 
 async def cors_test():
     """Simple endpoint to test CORS functionality"""
     return JSONResponse(
