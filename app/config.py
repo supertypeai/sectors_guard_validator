@@ -37,11 +37,29 @@ class Settings(BaseSettings):
     frontend_url: str = os.getenv("FRONTEND_URL", "http://localhost:3000")
 
     # Additional CORS origins (comma-separated) or defaults
-    cors_origins: List[str] = [
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "https://sectors-guard.vercel.app"
-    ]
+    cors_origins: List[str] = []
+    
+    def get_cors_origins(self) -> List[str]:
+        """Get properly configured CORS origins including production defaults"""
+        default_origins = [
+            "http://localhost:3000",
+            "http://127.0.0.1:3000",
+            "https://sectors-guard.vercel.app"
+        ]
+        
+        if os.getenv("CORS_ORIGINS"):
+            env_origins = [
+                origin.strip() for origin in os.getenv("CORS_ORIGINS", "").split(",")
+                if origin.strip()
+            ]
+            # Combine env origins with defaults, remove duplicates
+            all_origins = env_origins + default_origins
+            return list(dict.fromkeys(all_origins))
+        else:
+            # Ensure frontend_url is included
+            if self.frontend_url and self.frontend_url not in default_origins:
+                default_origins.insert(0, self.frontend_url)
+            return default_origins
     
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -62,15 +80,9 @@ class Settings(BaseSettings):
         # Set from_email to smtp_username if not specified
         if not self.from_email and self.smtp_username:
             self.from_email = self.smtp_username
-        if os.getenv("CORS_ORIGINS"):
-            self.cors_origins = [
-                origin.strip() for origin in os.getenv("CORS_ORIGINS", "").split(",")
-                if origin.strip()
-            ]
-        else:
-            # Ensure frontend_url is present in cors_origins and at the front
-            if self.frontend_url and self.frontend_url not in self.cors_origins:
-                self.cors_origins.insert(0, self.frontend_url)
+            
+        # Initialize cors_origins using the method
+        self.cors_origins = self.get_cors_origins()
     
     class Config:
         env_file = ".env"

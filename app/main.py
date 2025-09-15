@@ -23,20 +23,38 @@ DEFAULT_ORIGINS = [
     "http://127.0.0.1:3000",
 ]
 
+# Production frontend URL
+PRODUCTION_FRONTEND = "https://sectors-guard.vercel.app"
+
 FRONTEND_URL = os.getenv("FRONTEND_URL", DEFAULT_ORIGINS[0])
 
 if os.getenv("CORS_ORIGINS"):
     ALLOW_ORIGINS = [o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()]
 else:
-    ALLOW_ORIGINS = list(dict.fromkeys([FRONTEND_URL, *DEFAULT_ORIGINS]))
+    # Ensure production frontend is always included
+    origins_set = set([FRONTEND_URL, PRODUCTION_FRONTEND] + DEFAULT_ORIGINS)
+    ALLOW_ORIGINS = list(origins_set)
 
-# Configure CORS
+# Configure CORS with comprehensive settings
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOW_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD", "PATCH"],
+    allow_headers=[
+        "Accept",
+        "Accept-Language",
+        "Content-Language",
+        "Content-Type",
+        "Authorization",
+        "X-Requested-With",
+        "X-Custom-Header",
+        "Cache-Control",
+        "Pragma",
+        "Expires"
+    ],
+    expose_headers=["*"],
+    max_age=3600,
 )
 
 # Include routers
@@ -67,6 +85,19 @@ async def startup_event():
 @app.get("/")
 async def root():
     return {"message": "Sectors Guard API", "version": "1.0.0"}
+
+@app.options("/{path:path}")
+async def options_handler(path: str):
+    """Handle OPTIONS requests for CORS preflight"""
+    return JSONResponse(
+        status_code=200,
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS, HEAD, PATCH",
+            "Access-Control-Allow-Headers": "*",
+            "Access-Control-Max-Age": "3600",
+        }
+    )
 
 @app.get("/health")
 async def health_check():
