@@ -8,7 +8,8 @@ import json
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'app'))
 
 from app.validators.idx_financial_validator import IDXFinancialValidator
-from app.notifications.email_service import EmailService
+from app.notifications.validation_email_service import ValidationEmailService
+from app.notifications.email_helper import EmailHelper
 from app.database.connection import get_supabase_client, init_database
 
 async def validate_single_table(table_name: str, send_email: bool = True):
@@ -34,12 +35,12 @@ async def validate_single_table(table_name: str, send_email: bool = True):
             # Send email if requested
             if send_email:
                 try:
-                    email_service = EmailService()
-                    email_sent = await email_service.send_anomaly_alert(table_name, result)
+                    email_helper = EmailHelper()
+                    email_sent = await email_helper.notify_validation_complete(table_name, result, send_email=True)
                     if email_sent:
-                        print(f"   📧 Anomaly alert email sent successfully")
+                        print(f"   📧 Enhanced email notification sent successfully")
                     else:
-                        print(f"   ❌ Failed to send anomaly alert email")
+                        print(f"   ❌ Failed to send email notification")
                 except Exception as e:
                     print(f"   ❌ Email sending error: {e}")
         else:

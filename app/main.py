@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import os
 from dotenv import load_dotenv
+from app.config import settings
 
 from app.api.routes import validation_router, dashboard_router
 from app.database.connection import init_database
@@ -17,7 +18,7 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# Resolve frontend URL and CORS origins from environment
+# Resolve frontend URL and CORS origins from centralized settings (robust parsing)
 DEFAULT_ORIGINS = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
@@ -28,12 +29,14 @@ PRODUCTION_FRONTEND = "https://sectors-guard.vercel.app"
 
 FRONTEND_URL = os.getenv("FRONTEND_URL", DEFAULT_ORIGINS[0])
 
-if os.getenv("CORS_ORIGINS"):
-    ALLOW_ORIGINS = [o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()]
-else:
-    # Ensure production frontend is always included
-    origins_set = set([FRONTEND_URL, PRODUCTION_FRONTEND] + DEFAULT_ORIGINS)
-    ALLOW_ORIGINS = list(origins_set)
+# Use settings.cors_origins which handles JSON-like strings and dedupes with defaults
+ALLOW_ORIGINS = list(settings.cors_origins)
+
+# Ensure important origins are present without duplicates
+if PRODUCTION_FRONTEND not in ALLOW_ORIGINS:
+    ALLOW_ORIGINS.append(PRODUCTION_FRONTEND)
+if FRONTEND_URL and FRONTEND_URL not in ALLOW_ORIGINS:
+    ALLOW_ORIGINS.insert(0, FRONTEND_URL)
 
 # Configure CORS with comprehensive settings
 app.add_middleware(

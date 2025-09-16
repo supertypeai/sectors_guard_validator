@@ -29,12 +29,12 @@ async def test_quarterly_validation():
         # Convert to DataFrame
         df = pd.DataFrame(data)
         print(f"DataFrame shape: {df.shape}")
-        print(f"Columns: {list(df.columns)}")
-        print(f"\nData types:")
-        print(df.dtypes)
+        # print(f"Columns: {list(df.columns)}")
+        # print(f"\nData types:")
+        # print(df.dtypes)
 
-        print(f"\nSample data (first record):")
-        print(df.iloc[0].to_dict())
+        # print(f"\nSample data (first record):")
+        # print(df.iloc[0].to_dict())
 
         # Check for missing values in key columns
         key_columns = ['symbol', 'date', 'total_revenue', 'earnings', 'total_assets']

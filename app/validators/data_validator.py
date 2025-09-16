@@ -118,8 +118,8 @@ class DataValidator:
             
             if response.data:
                 row = response.data[0]
-                # Base rules may be stored under different keys
-                base_rules = row.get("validation_rules") or row.get("config_data") or {}
+                # Base rules may be stored under different keys - prioritize config_data
+                base_rules = row.get("config_data") or row.get("validation_rules") or {}
 
                 # Merge top-level columns into the returned config so validator sees thresholds and types
                 merged = dict(base_rules) if isinstance(base_rules, dict) else {}

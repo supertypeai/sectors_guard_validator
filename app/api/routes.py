@@ -9,7 +9,7 @@ from datetime import datetime
 
 from ..database.connection import get_supabase_client
 from ..validators.idx_financial_validator import IDXFinancialValidator
-from ..notifications.email_service import EmailService
+from ..notifications.email_helper import EmailHelper
 
 validation_router = APIRouter()
 dashboard_router = APIRouter()
@@ -98,8 +98,8 @@ async def run_validation(
         
         # Send email if anomalies detected
         if result.get("anomalies_count", 0) > 0:
-            email_service = EmailService()
-            await email_service.send_anomaly_alert(table_name, result)
+            email_helper = EmailHelper()
+            await email_helper.notify_validation_complete(table_name, result, send_email=True)
         
         return result
     except Exception as e:
@@ -144,8 +144,8 @@ async def run_all_validations(
                 
                 # Send email if anomalies detected
                 if result.get("anomalies_count", 0) > 0:
-                    email_service = EmailService()
-                    await email_service.send_anomaly_alert(table["name"], result)
+                    email_helper = EmailHelper()
+                    await email_helper.notify_validation_complete(table["name"], result, send_email=True)
                     
             except Exception as table_error:
                 print(f"❌ [API] Error processing table {table['name']}: {str(table_error)}")
@@ -268,9 +268,8 @@ async def get_dashboard_stats():
         # Get anomalies detected today
         anomalies_detected = sum(result.get("anomalies_count", 0) for result in response.data) if response.data else 0
         
-        # Get emails sent today
-        email_response = supabase.table("email_logs").select("*").gte("sent_at", today.isoformat()).execute()
-        emails_sent = len(email_response.data) if email_response.data else 0
+        # Email logging removed - not essential for core functionality
+        emails_sent = 0
         
         # Get last validation time
         last_validation_response = supabase.table("validation_results").select("validation_timestamp").order("validation_timestamp", desc=True).limit(1).execute()
@@ -354,8 +353,8 @@ async def get_table_validation_config(table_name: str):
             resp = supabase.table("validation_configs").select("*").eq("table_name", table_name).limit(1).execute()
             if resp.data and len(resp.data) > 0:
                 cfg = resp.data[0]
-                # Normalize shape for frontend: include validation_rules (or config_data), types, emails, threshold
-                validation_rules = cfg.get("validation_rules") or cfg.get("config_data") or cfg.get("config_data") or {}
+                # Normalize shape for frontend: include config_data as validation_rules for consistency
+                validation_rules = cfg.get("config_data") or cfg.get("validation_rules") or {}
                 return {
                     "table_name": cfg.get("table_name"),
                     "validation_rules": validation_rules,
@@ -463,9 +462,9 @@ async def save_table_validation_config(table_name: str, payload: Dict[str, Any])
         print(f"💾 [API] Saving validation config for {table_name}")
         # Normalize incoming payload
         validation_rules = payload.get("validation_rules") or payload.get("config_data") or payload.get("rules") or {}
-        validation_types = payload.get("validation_types") or payload.get("validation_types") or payload.get("types") or []
+        validation_types = payload.get("validation_types") or payload.get("types") or []
         email_recipients = payload.get("email_recipients") or payload.get("emailRecipients") or []
-        error_threshold = payload.get("error_threshold") or payload.get("errorThreshold") or payload.get("error_threshold", 5)
+        error_threshold = payload.get("error_threshold") or payload.get("errorThreshold") or 5
         enabled = payload.get("enabled") if "enabled" in payload else payload.get("is_active", True)
 
         # Check if config exists
@@ -473,7 +472,6 @@ async def save_table_validation_config(table_name: str, payload: Dict[str, Any])
 
         record = {
             "table_name": table_name,
-            "validation_rules": validation_rules,
             "config_data": validation_rules,
             "validation_types": validation_types,
             "email_recipients": email_recipients,
@@ -492,8 +490,40 @@ async def save_table_validation_config(table_name: str, payload: Dict[str, Any])
 
         return {"status": "success", "table_name": table_name}
     except Exception as e:
-        print(f"❌ [API] Error saving config for {table_name}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        error_msg = str(e)
+        print(f"❌ [API] Error saving config for {table_name}: {error_msg}")
+        
+        # Check if it's a column missing error and provide helpful message
+        if "does not exist" in error_msg and "Column" in error_msg:
+            print(f"🔧 [API] Database schema mismatch detected. Available columns may be different than expected.")
+            print(f"🔧 [API] Try using 'config_data' instead of 'validation_rules' column.")
+            
+            # Try alternative column mapping as fallback
+            try:
+                alternative_record = {
+                    "table_name": table_name,
+                    "config_data": record.get("config_data"),
+                    "email_recipients": record.get("email_recipients"),
+                    "error_threshold": record.get("error_threshold"),
+                    "enabled": record.get("enabled", True),
+                }
+                
+                if existing.data:
+                    resp = supabase.table("validation_configs").update(alternative_record).eq("table_name", table_name).execute()
+                    print(f"💾 [API] Updated config for {table_name} using alternative schema")
+                else:
+                    resp = supabase.table("validation_configs").insert(alternative_record).execute()
+                    print(f"💾 [API] Inserted config for {table_name} using alternative schema")
+                
+                return {"status": "success", "table_name": table_name, "note": "Used alternative column mapping"}
+            except Exception as fallback_error:
+                print(f"❌ [API] Fallback also failed: {fallback_error}")
+                raise HTTPException(
+                    status_code=500, 
+                    detail=f"Database schema mismatch. Original error: {error_msg}. Fallback error: {str(fallback_error)}"
+                )
+        
+        raise HTTPException(status_code=500, detail=error_msg)
 
 @dashboard_router.get("/charts/table-status")
 async def get_table_status():

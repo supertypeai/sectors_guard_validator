@@ -19,6 +19,13 @@ class Settings(BaseSettings):
     smtp_password: Optional[str] = os.getenv("SMTP_PASSWORD")
     from_email: Optional[str] = os.getenv("FROM_EMAIL")
     
+    # AWS SES settings
+    aws_access_key_id: Optional[str] = os.getenv("AWS_ACCESS_KEY_ID")
+    aws_secret_access_key: Optional[str] = os.getenv("AWS_SECRET_ACCESS_KEY")
+    aws_region: str = os.getenv("AWS_REGION", "us-east-1")
+    default_from_email: Optional[str] = os.getenv("DEFAULT_FROM_EMAIL")
+    default_from_name: str = os.getenv("DEFAULT_FROM_NAME", "Sectors Guard")
+    
     # Default email recipients
     default_email_recipients: List[str] = []
     daily_summary_recipients: List[str] = []
@@ -33,8 +40,9 @@ class Settings(BaseSettings):
     debug: bool = os.getenv("DEBUG", "False").lower() == "true"
     
     # CORS settings
-    # Primary frontend URL (can be a single origin)
     frontend_url: str = os.getenv("FRONTEND_URL", "http://localhost:3000")
+
+    password: str = os.getenv("PASSWORD")
 
     # Additional CORS origins (comma-separated) or defaults
     cors_origins: List[str] = []
@@ -48,8 +56,14 @@ class Settings(BaseSettings):
         ]
         
         if os.getenv("CORS_ORIGINS"):
+            env_origins_raw = os.getenv("CORS_ORIGINS", "")
+            
+            # Handle cases where the env var might be a string representation of a list
+            # e.g., '["url1", "url2"]' or "'url1','url2'"
+            cleaned_origins = env_origins_raw.replace('[', '').replace(']', '').replace('"', '').replace("'", "")
+            
             env_origins = [
-                origin.strip() for origin in os.getenv("CORS_ORIGINS", "").split(",")
+                origin.strip() for origin in cleaned_origins.split(",")
                 if origin.strip()
             ]
             # Combine env origins with defaults, remove duplicates

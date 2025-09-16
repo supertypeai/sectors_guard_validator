@@ -45,13 +45,13 @@ jobs:
         from datetime import datetime, timedelta
         sys.path.append('.')
         
-        from app.notifications.email_service import EmailService
+        from app.notifications.validation_email_service import ValidationEmailService
         from app.database.connection import get_supabase_client
         
         async def generate_daily_summary():
             try:
                 supabase = get_supabase_client()
-                email_service = EmailService()
+                email_service = ValidationEmailService()
                 
                 # Calculate date range for yesterday
                 today = datetime.utcnow().date()

@@ -174,7 +174,7 @@ jobs:
         sys.path.append('.')
         
         from app.validators.idx_financial_validator import IDXFinancialValidator
-        from app.notifications.email_service import EmailService
+        from app.notifications.email_helper import EmailHelper
         from app.database.connection import get_supabase_client
         
         async def run_validations():
@@ -189,7 +189,7 @@ jobs:
                 print(f'Tables to validate: {tables_to_validate}')
                 
                 validator = IDXFinancialValidator()
-                email_service = EmailService()
+                email_helper = EmailHelper()
                 
                 total_anomalies = 0
                 results_summary = []
@@ -211,8 +211,8 @@ jobs:
                         
                         # Send email if anomalies detected
                         if anomalies_count > 0:
-                            await email_service.send_anomaly_alert(table_name, result)
-                            print(f'📧 Anomaly alert sent for {table_name}: {anomalies_count} anomalies')
+                            await email_helper.notify_validation_complete(table_name, result, send_email=True)
+                            print(f'📧 Enhanced email notification sent for {table_name}: {anomalies_count} anomalies')
                         else:
                             print(f'✅ No anomalies found in {table_name}')
                             
