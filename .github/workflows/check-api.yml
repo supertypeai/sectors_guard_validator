@@ -18,6 +18,7 @@ jobs:
         id: call
         env:
           PERIWATCH_API_URL: ${{ secrets.PERIWATCH_API_URL }}
+          PERIWATCH_API_KEY: ${{ secrets.PERIWATCH_API_KEY }}
           INPUT_API_URL: ${{ github.event.inputs.api_url }}
         run: |
           set -euo pipefail
@@ -40,8 +41,14 @@ jobs:
           host_only=$(echo "$API_URL" | sed -E 's/\?.*//')
           echo "Using API_URL source=$SOURCE host=$host_only"
 
+          auth_args=()
+          if [ -n "${PERIWATCH_API_KEY:-}" ]; then
+            auth_args=( -H "Authorization: Bearer ${PERIWATCH_API_KEY}" )
+            echo "Using Authorization header for authentication"
+          fi
+
           # Timeout 60s
-          response=$(curl -sS --max-time 60 -w "\n%{http_code}" "$API_URL" || true)
+          response=$(curl -sS --max-time 60 -w "\n%{http_code}" "${auth_args[@]}" "$API_URL" || true)
           http=$(echo "$response" | tail -n1)
           body=$(echo "$response" | sed '$d')
 
