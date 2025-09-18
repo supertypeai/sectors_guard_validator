@@ -66,6 +66,7 @@ jobs:
             exit 1
           fi
 
+
       - name: Show outputs
         run: |
           echo "Status: ${{ steps.call.outputs.http_status }}"
