@@ -47,16 +47,13 @@ jobs:
             echo "Using Authorization header for authentication"
           fi
 
-          # Timeout 60s
-          response=$(curl -sS --max-time 60 -w "\n%{http_code}" "${auth_args[@]}" "$API_URL" || true)
-          http=$(echo "$response" | tail -n1)
-          body=$(echo "$response" | sed '$d')
 
-          # expose outputs
+          # Timeout 60s. Save response to a file (binary-safe) and capture only HTTP status code.
+          OUT_FILE=periwatch_output.pdf
+          http=$(curl -sS --max-time 60 -w "%{http_code}" -o "$OUT_FILE" "${auth_args[@]}" "$API_URL" || echo "000")
+
+          # expose only HTTP status
           echo "http_status=$http" >> $GITHUB_OUTPUT
-          echo "body<<EOF" >> $GITHUB_OUTPUT
-          echo "$body" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
 
           if echo "$http" | grep -qE '^2'; then
             echo "API call successful (status $http)"
@@ -66,8 +63,13 @@ jobs:
             exit 1
           fi
 
-      - name: Show outputs
+      - name: Show status
         run: |
           echo "Status: ${{ steps.call.outputs.http_status }}"
-          echo "Body (truncated to 1000 chars):"
-          echo "${{ steps.call.outputs.body }}" | cut -c1-1000
+
+      - name: Upload PDF artifact (only on success)
+        if: startsWith( steps.call.outputs.http_status, '2' )
+        uses: actions/upload-artifact@v4
+        with:
+          name: periwatch-pdf
+          path: periwatch_output.pdf
