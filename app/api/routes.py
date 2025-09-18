@@ -4,13 +4,19 @@ API routes for validation and dashboard endpoints
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import List, Dict, Any, Optional
+import time
 import json
+import os
+import httpx
 from datetime import datetime
 
 from ..database.connection import get_supabase_client
 from ..validators.idx_financial_validator import IDXFinancialValidator
 from ..notifications.email_helper import EmailHelper
 from app.auth import verify_bearer_token
+
+# In-memory cache for GitHub Actions responses to avoid rate limiting
+_LOCAL_CACHE = {}
 
 validation_router = APIRouter()
 dashboard_router = APIRouter()
@@ -668,3 +674,163 @@ async def get_table_data(
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error fetching table data: {str(e)}")
+
+@dashboard_router.get("/github-actions")
+async def get_github_actions_status():
+    """Get GitHub Actions workflow status for repository workflows"""
+    # Return cached response when recent to avoid GitHub rate limits
+    try:
+        cache_entry = _LOCAL_CACHE.get('github_actions')
+        if cache_entry:
+            age = time.time() - cache_entry.get('ts', 0)
+            if age < 86400:  # cache TTL (1 day)
+                return cache_entry.get('data')
+    except Exception:
+        # If cache read fails, continue to fetch
+        pass
+    try:
+        import os
+        from datetime import datetime, timedelta
+        
+        # Get repository info from environment or defaults
+        repo_owner = os.getenv("GITHUB_REPO_OWNER", "supertypeai")
+        repo_name = os.getenv("GITHUB_REPO_NAME", "sectors_guard_validator")
+        github_token = os.getenv("GITHUB_TOKEN")
+        
+        # Prepare headers
+        headers = {
+            "Accept": "application/vnd.github.v3+json",
+            "User-Agent": "sectors-guard-validator"
+        }
+        if github_token:
+            headers["Authorization"] = f"token {github_token}"
+        
+        # Fetch workflow runs for check-api and fetch-sheet workflows
+        async with httpx.AsyncClient() as client:
+            # First, try to get all workflows to see what's available
+            workflows_url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/actions/workflows"
+            workflows_response = await client.get(workflows_url, headers=headers)
+            
+            print(f"Workflows URL: {workflows_url}")
+            print(f"Workflows Response Status: {workflows_response.status_code}")
+            
+            if workflows_response.status_code == 200:
+                workflows_data = workflows_response.json()
+                print(f"Available workflows: {[w['name'] for w in workflows_data.get('workflows', [])]}")
+            
+            # Get check-api workflow runs
+            check_api_url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/actions/workflows/check-api.yml/runs"
+            check_api_response = await client.get(check_api_url, headers=headers, params={"per_page": 5})
+            
+            # Get fetch-sheet workflow runs  
+            fetch_sheet_url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/actions/workflows/fetch-sheet.yml/runs"
+            fetch_sheet_response = await client.get(fetch_sheet_url, headers=headers, params={"per_page": 5})
+            
+            print(f"Check API URL: {check_api_url}")
+            print(f"Check API Response Status: {check_api_response.status_code}")
+            print(f"Fetch Sheet URL: {fetch_sheet_url}")
+            print(f"Fetch Sheet Response Status: {fetch_sheet_response.status_code}")
+            
+            result = {
+                "check_api": {
+                    "status": "unknown",
+                    "last_run": None,
+                    "last_success": None,
+                    "last_failure": None,
+                    "runs": []
+                },
+                "fetch_sheet": {
+                    "status": "unknown", 
+                    "last_run": None,
+                    "last_success": None,
+                    "last_failure": None,
+                    "runs": []
+                }
+            }
+            
+            # Process check-api workflow runs
+            if check_api_response.status_code == 200:
+                check_api_data = check_api_response.json()
+                print(f"Check API data: {check_api_data}")
+                runs = check_api_data.get("workflow_runs", [])
+                if runs:
+                    latest_run = runs[0]
+                    result["check_api"]["status"] = latest_run.get("conclusion", "unknown")
+                    result["check_api"]["last_run"] = latest_run.get("created_at")
+                    
+                    # Find last success and failure
+                    for run in runs:
+                        conclusion = run.get("conclusion")
+                        created_at = run.get("created_at")
+                        if conclusion == "success" and not result["check_api"]["last_success"]:
+                            result["check_api"]["last_success"] = created_at
+                        elif conclusion == "failure" and not result["check_api"]["last_failure"]:
+                            result["check_api"]["last_failure"] = created_at
+                    
+                    # Store recent runs for display
+                    result["check_api"]["runs"] = [{
+                        "id": run.get("id"),
+                        "status": run.get("conclusion", "unknown"),
+                        "created_at": run.get("created_at"),
+                        "html_url": run.get("html_url")
+                    } for run in runs[:3]]
+            else:
+                print(f"Check API error: {check_api_response.status_code} - {check_api_response.text}")
+            
+            # Process fetch-sheet workflow runs
+            if fetch_sheet_response.status_code == 200:
+                fetch_sheet_data = fetch_sheet_response.json()
+                print(f"Fetch Sheet data: {fetch_sheet_data}")
+                runs = fetch_sheet_data.get("workflow_runs", [])
+                if runs:
+                    latest_run = runs[0]
+                    result["fetch_sheet"]["status"] = latest_run.get("conclusion", "unknown")
+                    result["fetch_sheet"]["last_run"] = latest_run.get("created_at")
+                    
+                    # Find last success and failure
+                    for run in runs:
+                        conclusion = run.get("conclusion")
+                        created_at = run.get("created_at")
+                        if conclusion == "success" and not result["fetch_sheet"]["last_success"]:
+                            result["fetch_sheet"]["last_success"] = created_at
+                        elif conclusion == "failure" and not result["fetch_sheet"]["last_failure"]:
+                            result["fetch_sheet"]["last_failure"] = created_at
+                    
+                    # Store recent runs for display
+                    result["fetch_sheet"]["runs"] = [{
+                        "id": run.get("id"),
+                        "status": run.get("conclusion", "unknown"),
+                        "created_at": run.get("created_at"),
+                        "html_url": run.get("html_url")
+                    } for run in runs[:3]]
+            else:
+                print(f"Fetch Sheet error: {fetch_sheet_response.status_code} - {fetch_sheet_response.text}")
+
+            # Cache the result for TTL to reduce repeated calls
+            try:
+                _LOCAL_CACHE['github_actions'] = {'ts': time.time(), 'data': result}
+            except Exception:
+                pass
+
+            return result
+            
+    except Exception as e:
+        # Return fallback data if GitHub API fails
+        return {
+            "check_api": {
+                "status": "unknown",
+                "last_run": None,
+                "last_success": None,
+                "last_failure": None,
+                "runs": [],
+                "error": str(e)
+            },
+            "fetch_sheet": {
+                "status": "unknown",
+                "last_run": None,
+                "last_success": None,
+                "last_failure": None,
+                "runs": [],
+                "error": str(e)
+            }
+        }
