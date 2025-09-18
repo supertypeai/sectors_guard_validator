@@ -140,3 +140,4 @@ vite.config.ts.timestamp-*
 /backend/br
 *.pyc
 /br
+*.json

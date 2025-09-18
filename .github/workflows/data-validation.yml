@@ -212,7 +212,7 @@ jobs:
                         # Send email if anomalies detected
                         if anomalies_count > 0:
                             await email_helper.notify_validation_complete(table_name, result, send_email=True)
-                            print(f'📧 Enhanced email notification sent for {table_name}: {anomalies_count} anomalies')
+                            print(f'📧 Email notification sent for {table_name}: {anomalies_count} anomalies')
                         else:
                             print(f'✅ No anomalies found in {table_name}')
                             

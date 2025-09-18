@@ -1,6 +1,5 @@
 """
-Enhanced data validator with email notification integration
-Extends the existing DataValidator to include email notifications
+Data validator with email notification integration
 """
 
 import asyncio
@@ -14,15 +13,13 @@ from ..notifications.email_helper import email_helper, notify_validation_result,
 logger = logging.getLogger(__name__)
 
 class NotificationDataValidator(DataValidator):
-    """Enhanced DataValidator with email notification capabilities"""
-    
     def __init__(self, enable_notifications: bool = True):
         super().__init__()
         self.enable_notifications = enable_notifications
         
     async def validate_table(self, table_name: str, send_notification: bool = None) -> Dict[str, Any]:
         """
-        Enhanced validate_table method with email notifications
+        validate_table method with email notifications
         
         Args:
             table_name: Name of the table to validate

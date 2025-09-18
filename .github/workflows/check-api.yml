@@ -1,0 +1,66 @@
+name: Check Periwatch API
+
+on:
+  workflow_dispatch:
+    inputs:
+      api_url:
+        description: 'Optional API URL'
+        required: false
+        default: ''
+  schedule:
+    - cron: '15 8 * * 4'
+
+jobs:
+  call_api:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Prepare and call Periwatch API
+        id: call
+        env:
+          PERIWATCH_API_URL: ${{ secrets.PERIWATCH_API_URL }}
+          INPUT_API_URL: ${{ github.event.inputs.api_url }}
+        run: |
+          set -euo pipefail
+
+          # Prefer repository secret PERIWATCH_API_URL, then workflow_dispatch input
+          API_URL="${PERIWATCH_API_URL:-$INPUT_API_URL}"
+          if [ -z "$API_URL" ]; then
+            echo "Error: no API URL provided. Set repository secret PERIWATCH_API_URL or pass 'api_url' input when dispatching the workflow."
+            exit 1
+          fi
+
+          if [ -n "${PERIWATCH_API_URL:-}" ]; then
+            SOURCE="secret"
+          elif [ -n "${INPUT_API_URL:-}" ]; then
+            SOURCE="input"
+          else
+            SOURCE="default"
+          fi
+
+          host_only=$(echo "$API_URL" | sed -E 's/\?.*//')
+          echo "Using API_URL source=$SOURCE host=$host_only"
+
+          # Timeout 60s
+          response=$(curl -sS --max-time 60 -w "\n%{http_code}" "$API_URL" || true)
+          http=$(echo "$response" | tail -n1)
+          body=$(echo "$response" | sed '$d')
+
+          # expose outputs
+          echo "http_status=$http" >> $GITHUB_OUTPUT
+          echo "body<<EOF" >> $GITHUB_OUTPUT
+          echo "$body" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+          if echo "$http" | grep -qE '^2'; then
+            echo "API call successful (status $http)"
+          else
+            echo "API call failed (status $http)"
+            # Fail the job so notifications / checks surface the problem
+            exit 1
+          fi
+
+      - name: Show outputs
+        run: |
+          echo "Status: ${{ steps.call.outputs.http_status }}"
+          echo "Body (truncated to 1000 chars):"
+          echo "${{ steps.call.outputs.body }}" | cut -c1-1000

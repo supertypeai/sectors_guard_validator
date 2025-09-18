@@ -38,7 +38,7 @@ async def validate_single_table(table_name: str, send_email: bool = True):
                     email_helper = EmailHelper()
                     email_sent = await email_helper.notify_validation_complete(table_name, result, send_email=True)
                     if email_sent:
-                        print(f"   📧 Enhanced email notification sent successfully")
+                        print(f"   📧 Email notification sent successfully")
                     else:
                         print(f"   ❌ Failed to send email notification")
                 except Exception as e:
