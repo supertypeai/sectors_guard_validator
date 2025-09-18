@@ -1,0 +1,47 @@
+name: Fetch Google Sheet
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Fetch mode: csv (default)'
+        required: false
+        default: 'csv'
+      csv_url:
+        description: 'Optional CSV export URL to override secret (not recommended for secrets)'
+        required: false
+        default: ''
+  schedule:
+    # default: run weekly on Monday at 08:00 UTC
+    - cron: '0 8 * * 1'
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger backend to fetch sheet
+        env:
+          BACKEND_TRIGGER_URL: ${{ secrets.BACKEND_TRIGGER_URL }}
+          BACKEND_API_TOKEN: ${{ secrets.BACKEND_API_TOKEN }}
+          MODE: ${{ github.event.inputs.mode }}
+          CSV_URL_INPUT: ${{ github.event.inputs.csv_url }}
+        run: |
+          set -euo pipefail
+          if [ -z "${BACKEND_TRIGGER_URL:-}" ]; then
+            echo "Error: BACKEND_TRIGGER_URL secret not set. Set secret BACKEND_TRIGGER_URL to enable backend trigger."
+            exit 1
+          fi
+
+          payload=$(jq -n --arg mode "$MODE" --arg csv_url "$CSV_URL_INPUT" '{mode: $mode, csv_url: $csv_url}')
+
+          echo "Triggering backend fetch (host: $(echo "$BACKEND_TRIGGER_URL" | sed -E 's/\?.*//'))"
+          http_code=$(curl -sS -o /dev/null -w "%{http_code}" -X POST "$BACKEND_TRIGGER_URL" \
+            -H "Authorization: Bearer ${BACKEND_API_TOKEN:-}" \
+            -H "Content-Type: application/json" \
+            -d "$payload" ) || true
+
+          echo "Backend trigger returned HTTP $http_code"
+          if ! echo "$http_code" | grep -qE '^2'; then
+            echo "Backend trigger failed"
+            exit 1
+          fi

@@ -10,6 +10,7 @@ from datetime import datetime
 from ..database.connection import get_supabase_client
 from ..validators.idx_financial_validator import IDXFinancialValidator
 from ..notifications.email_helper import EmailHelper
+from app.auth import verify_bearer_token
 
 validation_router = APIRouter()
 dashboard_router = APIRouter()
@@ -84,7 +85,8 @@ async def get_tables():
 async def run_validation(
     table_name: str,
     start_date: Optional[str] = Query(None, description="Start date filter (YYYY-MM-DD)"),
-    end_date: Optional[str] = Query(None, description="End date filter (YYYY-MM-DD)")
+    end_date: Optional[str] = Query(None, description="End date filter (YYYY-MM-DD)"),
+    _: None = Depends(verify_bearer_token)
 ):
     """Run validation for a specific table with optional date filter"""
     try:
@@ -109,7 +111,8 @@ async def run_validation(
 @validation_router.post("/run-all")
 async def run_all_validations(
     start_date: Optional[str] = Query(None, description="Start date filter (YYYY-MM-DD)"),
-    end_date: Optional[str] = Query(None, description="End date filter (YYYY-MM-DD)")
+    end_date: Optional[str] = Query(None, description="End date filter (YYYY-MM-DD)"),
+    _: None = Depends(verify_bearer_token)
 ):
     """Run validation for all tables with optional date filter"""
     try:
@@ -458,6 +461,8 @@ async def get_table_validation_config(table_name: str):
 async def save_table_validation_config(table_name: str, payload: Dict[str, Any]):
     """Save or update validation configuration for a specific table"""
     try:
+        _ = verify_bearer_token  # satisfy linters if unused in annotations
+        _  # no-op
         supabase = get_supabase_client()
         print(f"💾 [API] Saving validation config for {table_name}")
         # Normalize incoming payload

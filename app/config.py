@@ -46,6 +46,12 @@ class Settings(BaseSettings):
 
     # Additional CORS origins (comma-separated) or defaults
     cors_origins: List[str] = []
+
+    # Backend auth token for protected endpoints
+    backend_api_token: Optional[str] = os.getenv("BACKEND_API_TOKEN")
+
+    # Optional Google Sheet CSV URL for backend fetch
+    gsheet_csv_url: Optional[str] = os.getenv("GSHEET_CSV_URL")
     
     def get_cors_origins(self) -> List[str]:
         """Get properly configured CORS origins including production defaults"""
