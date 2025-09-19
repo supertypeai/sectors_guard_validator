@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Request, Header, HTTPException, status
-from fastapi.responses import PlainTextResponse, JSONResponse, FileResponse
+from fastapi.responses import PlainTextResponse, JSONResponse, FileResponse, Response
 import os
 from pathlib import Path
 import time
@@ -163,7 +163,10 @@ async def get_sheet(format: Optional[str] = None):
     Otherwise returns raw CSV (text/csv).
     """
     if not SHEET_PATH.exists():
-        return JSONResponse({"ok": False, "reason": "no_cache"}, status_code=204)
+        # 204 No Content MUST NOT include a response body. Returning a JSON body with 204
+        # causes a Content-Length mismatch under some ASGI servers/proxies.
+        # See: https://www.rfc-editor.org/rfc/rfc9110#name-204-no-content
+        return Response(status_code=204)
 
     if format and format.lower() == "json":
         try:
