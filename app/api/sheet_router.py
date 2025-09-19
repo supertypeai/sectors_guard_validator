@@ -7,6 +7,7 @@ import csv
 import asyncio
 import httpx
 from typing import Optional
+from datetime import datetime, timezone
 
 router = APIRouter()
 
@@ -93,6 +94,19 @@ async def _fetch_and_save(csv_url: str, timeout: int = 30) -> dict:
     return meta
 
 
+def _sheet_modified_today() -> bool:
+    """Return True if SHEET_PATH exists and its last modified date is today (UTC)."""
+    try:
+        if not SHEET_PATH.exists():
+            return False
+        mtime = SHEET_PATH.stat().st_mtime
+        dt = datetime.fromtimestamp(mtime, tz=timezone.utc)
+        today = datetime.now(timezone.utc).date()
+        return dt.date() == today
+    except Exception:
+        return False
+
+
 @router.post("/internal/fetch-sheet")
 async def trigger_fetch(request: Request, authorization: Optional[str] = Header(None)):
     """Protected endpoint to trigger backend to fetch the Google Sheet.
@@ -117,7 +131,7 @@ async def trigger_fetch(request: Request, authorization: Optional[str] = Header(
         body = {}
 
     csv_url = body.get("csv_url")
-    mode = body.get("mode")
+    mode = (body.get("mode") or "").strip().lower()
 
     if not csv_url:
         csv_url = os.getenv("GSHEET_CSV_URL")
@@ -125,9 +139,16 @@ async def trigger_fetch(request: Request, authorization: Optional[str] = Header(
     if not csv_url:
         raise HTTPException(status_code=400, detail="No CSV URL provided and GSHEET_CSV_URL not set in backend environment")
 
-    # fetch and save
+    # If the sheet has already been fetched/updated today, skip re-downloading unless forced
+    if mode != "force" and _sheet_modified_today():
+        meta = _read_meta()
+        print("Skipping fetch; sheet already fresh today")
+        return JSONResponse({"ok": True, "skipped": True, "reason": "already_fresh_today", "meta": meta})
+
+    # fetch and save (forced or stale/missing)
     try:
         meta = await _fetch_and_save(csv_url)
+        print(f"Fetched and saved sheet data: {meta}")
     except HTTPException:
         raise
     except Exception as e:

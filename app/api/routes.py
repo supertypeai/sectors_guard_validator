@@ -751,7 +751,7 @@ async def get_github_actions_status():
             # Process check-api workflow runs
             if check_api_response.status_code == 200:
                 check_api_data = check_api_response.json()
-                print(f"Check API data: {check_api_data}")
+                # print(f"Check API data: {check_api_data}")
                 runs = check_api_data.get("workflow_runs", [])
                 if runs:
                     latest_run = runs[0]
@@ -780,7 +780,7 @@ async def get_github_actions_status():
             # Process fetch-sheet workflow runs
             if fetch_sheet_response.status_code == 200:
                 fetch_sheet_data = fetch_sheet_response.json()
-                print(f"Fetch Sheet data: {fetch_sheet_data}")
+                # print(f"Fetch Sheet data: {fetch_sheet_data}")
                 runs = fetch_sheet_data.get("workflow_runs", [])
                 if runs:
                     latest_run = runs[0]

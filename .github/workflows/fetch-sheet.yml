@@ -12,8 +12,8 @@ on:
         required: false
         default: ''
   schedule:
-    # default: run weekly on Monday at 08:00 UTC
-    - cron: '0 8 * * 1'
+    # default: once daily at midnight UTC
+    - cron: '0 0 * * *'
 
 jobs:
   fetch:
