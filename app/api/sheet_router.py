@@ -93,6 +93,31 @@ async def _fetch_and_save(csv_url: str, timeout: int = 30) -> dict:
     _write_meta(meta)
     return meta
 
+async def ensure_sheet_cache_on_start() -> None:
+    """Optionally prefetch the sheet on application startup when cache is missing.
+    Skips if cache already exists for today.
+    """
+    try:
+        prefetch_flag = (os.getenv("PREFETCH_SHEET_ON_START", "").strip().lower() in {"1", "true"})
+        if not prefetch_flag:
+            return
+        if _sheet_modified_today():
+            return
+        csv_url = os.getenv("GSHEET_CSV_URL")
+        if not csv_url:
+            print("[startup] PREFETCH enabled but GSHEET_CSV_URL is not set; skipping prefetch")
+            return
+        try:
+            print("[startup] Prefetching sheet cache...")
+            await _fetch_and_save(csv_url)
+            print("[startup] Prefetch completed")
+        except HTTPException as he:
+            print(f"[startup] Prefetch failed: {he.detail}")
+        except Exception as e:
+            print(f"[startup] Prefetch error: {e}")
+    except Exception as outer:
+        print(f"[startup] ensure_sheet_cache_on_start error: {outer}")
+
 
 def _sheet_modified_today() -> bool:
     """Return True if SHEET_PATH exists and its last modified date is today (UTC)."""
@@ -105,7 +130,6 @@ def _sheet_modified_today() -> bool:
         return dt.date() == today
     except Exception:
         return False
-
 
 @router.post("/internal/fetch-sheet")
 async def trigger_fetch(request: Request, authorization: Optional[str] = Header(None)):
@@ -155,7 +179,6 @@ async def trigger_fetch(request: Request, authorization: Optional[str] = Header(
         raise HTTPException(status_code=500, detail=str(e))
 
     return JSONResponse({"ok": True, "meta": meta})
-
 
 @router.get("/api/sheet")
 async def get_sheet(format: Optional[str] = None):

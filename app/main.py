@@ -7,6 +7,7 @@ from app.config import settings
 
 from app.api.routes import validation_router, dashboard_router
 from app.api.sheet_router import router as sheet_router
+from app.api.sheet_router import ensure_sheet_cache_on_start
 from app.database.connection import init_database
 
 # Load environment variables
@@ -86,6 +87,12 @@ async def startup_event():
         print(f"🔧 CORS_ORIGINS = {ALLOW_ORIGINS}")
     except Exception as e:
         print(f"⚠️  Could not read settings: {e}")
+
+    # Optionally warm up the sheet cache on startup
+    try:
+        await ensure_sheet_cache_on_start()
+    except Exception as e:
+        print(f"⚠️  Sheet prefetch on startup failed: {e}")
 
 @app.get("/")
 async def root():
