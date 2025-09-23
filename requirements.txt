@@ -5,20 +5,20 @@ gunicorn==21.2.0
 
 # Database and ORM
 supabase==2.0.3
-sqlalchemy==2.0.23
-psycopg2-binary==2.9.9
+sqlalchemy==2.0.43
+psycopg2-binary
 
 # Data manipulation and validation
-pandas==2.1.4
-numpy==1.25.2
-pydantic==2.5.1
-pandera==0.17.2
+pandas
+numpy==2.3.3
+pydantic
+pandera
 
 # Visualization and analysis
 plotly==5.17.0
 seaborn==0.13.0
-matplotlib==3.8.2
-scipy==1.11.4
+matplotlib==3.10.6
+scipy
 
 # Email notifications
 jinja2==3.1.2
