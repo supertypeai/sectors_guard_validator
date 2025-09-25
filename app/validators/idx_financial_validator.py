@@ -25,6 +25,7 @@ class IDXFinancialValidator(DataValidator):
             'idx_all_time_price': self._validate_all_time_price,
             'idx_filings': self._validate_filings,
             'idx_stock_split': self._validate_stock_split,
+            'idx_news': self._validate_news,
             'sgx_company_report': self._validate_sgx_company_report,
             'sgx_manual_input': self._validate_sgx_manual_input
         }
@@ -1367,6 +1368,101 @@ class IDXFinancialValidator(DataValidator):
             anomalies.append({
                 "type": "validation_error",
                 "message": f"Error validating stock split data: {str(e)}",
+                "severity": "error"
+            })
+        return {"anomalies": anomalies}
+
+    async def _validate_news(self, data: pd.DataFrame) -> Dict[str, Any]:
+        """Validate idx_news table.
+        Rules per row:
+        1. Column 'sub_sector' must exist and be a list (or JSON array string) of unique strings.
+        2. Length of the sub_sector list must be <= 5.
+        3. No duplicate (case-insensitive) entries inside the list.
+        """
+        anomalies: List[Dict[str, Any]] = []
+        try:
+            if 'sub_sector' not in data.columns:
+                anomalies.append({
+                    "type": "missing_required_columns",
+                    "columns": ['sub_sector'],
+                    "message": "Missing required column: sub_sector",
+                    "severity": "error"
+                })
+                return {"anomalies": anomalies}
+
+            for idx, row in data.iterrows():
+                raw_val = row.get('sub_sector')
+                parsed_list: List[str] = []
+                record_id = row.get('id')
+
+                if isinstance(raw_val, list):
+                    parsed_list = raw_val
+                elif isinstance(raw_val, str):
+                    val = raw_val.strip()
+                    if val.startswith('[') and val.endswith(']'):
+                        try:
+                            import json
+                            parsed = json.loads(val)
+                            if isinstance(parsed, list):
+                                parsed_list = parsed
+                            else:
+                                parsed_list = [str(parsed)]
+                        except Exception:
+                            inner = val[1:-1]
+                            parsed_list = [p.strip().strip('"\'') for p in inner.split(',') if p.strip()]
+                    elif val == '' or val.lower() in ('none','null'):
+                        parsed_list = []
+                    else:
+                        if ',' in val:
+                            parsed_list = [p.strip() for p in val.split(',') if p.strip()]
+                        else:
+                            parsed_list = [val]
+                elif pd.isna(raw_val):
+                    parsed_list = []
+                else:
+                    anomalies.append({
+                        "type": "invalid_sub_sector_format",
+                        "row_index": int(idx),
+                        "value": str(raw_val),
+                        "id": record_id,
+                        "message": "Subsector field has unsupported type",
+                        "severity": "error"
+                    })
+                    continue
+
+                normalized = [str(item).strip() for item in parsed_list if item not in (None, '')]
+
+                if len(normalized) > 5:
+                    anomalies.append({
+                        "type": "invalid_subsector_length",
+                        "row_index": int(idx),
+                        "length": len(normalized),
+                        "id": record_id,
+                        "message": f"Subsector list length {len(normalized)} exceeds maximum 5",
+                        "severity": "error"
+                    })
+
+                lowered_seen = {}
+                duplicates = set()
+                for item in normalized:
+                    key = item.lower()
+                    if key in lowered_seen:
+                        duplicates.add(item)
+                    else:
+                        lowered_seen[key] = True
+                if duplicates:
+                    anomalies.append({
+                        "type": "duplicate_subsector_entries",
+                        "row_index": int(idx),
+                        "duplicates": sorted(list(duplicates)),
+                        "id": record_id,
+                        "message": f"Duplicate subsector entries found: {', '.join(sorted(list(duplicates)))}",
+                        "severity": "error"
+                    })
+        except Exception as e:
+            anomalies.append({
+                "type": "validation_error",
+                "message": f"Error validating idx_news data: {str(e)}",
                 "severity": "error"
             })
         return {"anomalies": anomalies}

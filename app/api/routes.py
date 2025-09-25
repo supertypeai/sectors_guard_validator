@@ -71,6 +71,12 @@ async def get_tables():
                 "rules": "Multiple stock splits within 2 weeks for same symbol"
             },
             {
+                "name": "idx_news",
+                "description": "News table subsector tagging validation",
+                "validation_type": "News Subsector Validation",
+                "rules": "subsector list length <=5 and no duplicate entries"
+            },
+            {
                 "name": "sgx_company_report",
                 "description": "SGX company fundamentals and price freshness",
                 "validation_type": "SGX Company Report Validation",
