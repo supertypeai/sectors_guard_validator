@@ -2,7 +2,9 @@ import pandas as pd
 import numpy as np
 from typing import Dict, List, Any, Optional, Tuple
 from datetime import datetime, timedelta
+import re
 import asyncio
+import pytz
 
 from .data_validator import DataValidator
 from ..database.connection import get_supabase_client
@@ -22,7 +24,9 @@ class IDXFinancialValidator(DataValidator):
             'idx_dividend': self._validate_dividend,
             'idx_all_time_price': self._validate_all_time_price,
             'idx_filings': self._validate_filings,
-            'idx_stock_split': self._validate_stock_split
+            'idx_stock_split': self._validate_stock_split,
+            'sgx_company_report': self._validate_sgx_company_report,
+            'sgx_manual_input': self._validate_sgx_manual_input
         }
     
     async def validate_table(self, table_name: str, start_date: Optional[str] = None, end_date: Optional[str] = None) -> Dict[str, Any]:
@@ -57,6 +61,12 @@ class IDXFinancialValidator(DataValidator):
                 validation_func = self.idx_tables[table_name]
                 idx_results = await validation_func(data)
                 results["anomalies"].extend(idx_results.get("anomalies", []))
+                if table_name == 'sgx_company_report':
+                    results["sgx_top_50_filter"] = {
+                        "applied": True,
+                        "companies_validated": len(data),
+                        "note": "Validation limited to top 50 companies by market capitalization"
+                    }
             
             # Filter anomalies: only keep 'error' severity for database storage
             all_anomalies = results["anomalies"].copy()  # Keep all for return
@@ -88,35 +98,83 @@ class IDXFinancialValidator(DataValidator):
             }
     
     async def _fetch_table_data_with_filter(self, table_name: str, start_date: Optional[str] = None, end_date: Optional[str] = None) -> Tuple[pd.DataFrame, Optional[str], Optional[str]]:
-        """Fetch data from Supabase table with optional date filtering"""
+        """Fetch data from Supabase table with optional date filtering and SGX top 50 filtering"""
         try:
             print(f"📊 [Validator] Fetching data from table: {table_name}")
             print(f"📅 [Validator] Date filter - Start: {start_date}, End: {end_date}")
-            # If no date filter provided, apply sensible defaults per-table
-            today = datetime.utcnow().date()
-            # Daily table: last 7 days
+
+            jakarta_tz = pytz.timezone('Asia/Jakarta')
+            today = pd.Timestamp(datetime.now(jakarta_tz).date())
             if table_name == 'idx_daily_data' and not start_date and not end_date:
-                default_start = (today - timedelta(days=6)).isoformat()  # last 7 days inclusive
-                default_end = today.isoformat()
-                start_date = default_start
-                end_date = default_end
-            # Quarterly financials: default to last 1 year
+                start_date = (today - timedelta(days=6)).isoformat()
+                end_date = today.isoformat()
             elif table_name == 'idx_combine_financials_quarterly' and not start_date and not end_date:
-                default_start = (today - timedelta(days=365)).isoformat()  # approx 1 year
-                default_end = today.isoformat()
-                start_date = default_start
-                end_date = default_end
+                start_date = (today - timedelta(days=365)).isoformat()
+                end_date = today.isoformat()
 
             query = self.supabase.table(table_name).select("*")
-            
-            # Apply date filters if provided
-            if start_date:
-                query = query.gte("date", start_date)
-            if end_date:
-                query = query.lte("date", end_date)
-                
-            response = query.execute()
-            df = pd.DataFrame(response.data) if getattr(response, 'data', None) else pd.DataFrame()
+
+            # Execute base query
+            try:
+                response = query.execute()
+                raw_data = getattr(response, 'data', None)
+                # print(f"🧪 [Validator] Raw response type={type(raw_data)} length={len(raw_data) if raw_data is not None else 'None'}")
+            except Exception as err:
+                print(f"❌ [Validator] Supabase query error for {table_name}: {err}")
+                raw_data = None
+            df = pd.DataFrame(raw_data) if raw_data else pd.DataFrame()
+
+            # Client-side top 50 by market cap only
+            if table_name == 'sgx_company_report' and not df.empty:
+                print(f"🏁 [Validator] Starting SGX top 50 filtering pipeline (rows={len(df)})")
+                # Detect alternate market cap column names
+                market_cap_col = None
+                possible_cols = ['market_cap', 'marketCap', 'market_capitalization', 'mkt_cap', 'mcap', 'market_value']
+                for c in possible_cols:
+                    if c in df.columns:
+                        market_cap_col = c
+                        break
+                if market_cap_col and market_cap_col != 'market_cap':
+                    try:
+                        df['market_cap'] = df[market_cap_col]
+                        print(f"🔁 [Validator] Normalized market cap column '{market_cap_col}' -> 'market_cap'")
+                    except Exception as err:
+                        print(f"⚠️  [Validator] Failed to normalize market cap column '{market_cap_col}': {err}")
+
+                if 'market_cap' not in df.columns:
+                    print(f"⚠️  [Validator] SGX table missing market cap columns (checked {possible_cols}); cannot apply top 50 filter. Proceeding without filter.")
+                else:
+                    def _mc_to_number(v):
+                        try:
+                            if isinstance(v, (int, float)):
+                                return float(v)
+                            if isinstance(v, str):
+                                cleaned = re.sub(r'[^0-9.\-]', '', v)
+                                if cleaned.count('.') > 1:
+                                    first, *rest = cleaned.split('.')
+                                    cleaned = first + '.' + ''.join(rest)
+                                return float(cleaned) if cleaned not in ['', '.', '-'] else np.nan
+                            if isinstance(v, dict):
+                                for k in ['market_cap', 'value', 'amount']:
+                                    if k in v:
+                                        return _mc_to_number(v[k])
+                            return np.nan
+                        except Exception:
+                            return np.nan
+                    try:
+                        df['__mc_numeric'] = df['market_cap'].apply(_mc_to_number)
+                        before_non_null = df['__mc_numeric'].notna().sum()
+                        # Filter out null / non-positive market caps first
+                        filtered = df[df['__mc_numeric'].notna() & (df['__mc_numeric'] > 0)]
+                        if filtered.empty:
+                            print("⚠️  [Validator] No positive market_cap values after parsing; skipping top 50 reduction.")
+                        else:
+                            filtered = filtered.sort_values('__mc_numeric', ascending=False, na_position='last')
+                            top_n = filtered.head(50)
+                            print(f"📈 [Validator] SGX top 50 selected (from {len(df)} -> {len(top_n)})")
+                            df = top_n.drop(columns=['__mc_numeric'])
+                    except Exception as err:
+                        print(f"⚠️  [Validator] Error during SGX top 50 filtering: {err}. Proceeding with unfiltered data.")
             
             # Normalize common date aliases if present (so downstream validators can assume 'date')
             alias_date_cols = ['date', 'ex_date', 'exDate', 'ex date']
@@ -125,33 +183,11 @@ class IDXFinancialValidator(DataValidator):
                     df['date'] = df[c]
                     break
 
-            # If user requested date filtering but server-side filter returned no date column
-            # (some pipelines use different column names for date), fallback to client-side filtering
-            if (start_date or end_date) and ('date' not in df.columns):
-                # Re-fetch without server-side date filters and filter locally
-                try:
-                    full_resp = self.supabase.table(table_name).select("*").execute()
-                    full_df = pd.DataFrame(full_resp.data) if getattr(full_resp, 'data', None) else pd.DataFrame()
-                    # Normalize aliases in the full dataset
-                    for c in alias_date_cols:
-                        if c in full_df.columns and 'date' not in full_df.columns:
-                            full_df['date'] = full_df[c]
-                            break
-                    if not full_df.empty and 'date' in full_df.columns:
-                        full_df['date'] = pd.to_datetime(full_df['date'], errors='coerce')
-                        try:
-                            if start_date:
-                                full_df = full_df[full_df['date'] >= pd.to_datetime(start_date)]
-                            if end_date:
-                                full_df = full_df[full_df['date'] <= pd.to_datetime(end_date)]
-                        except Exception:
-                            pass
-                        df = full_df
-                except Exception as e:
-                    pass
-
             if not df.empty and 'date' in df.columns:
-                df['date'] = pd.to_datetime(df['date'], errors='coerce')
+                try:
+                    df['date'] = pd.to_datetime(df['date'], errors='coerce')
+                except Exception as err:
+                    print(f"⚠️  [Validator] Failed to coerce 'date' column: {err}")
             
             # Return DataFrame and the applied start/end so caller can reflect actual filter used
             return df, start_date, end_date
@@ -273,7 +309,7 @@ class IDXFinancialValidator(DataValidator):
                     "date": x.loc[idx].get('date').strftime('%Y-%m-%d') if isinstance(x.loc[idx].get('date'), (pd.Timestamp, datetime)) else x.loc[idx].get('date'),
                     "severity": "info"
                 })
-            # Now evaluate only fully non-null rows
+            # Evaluate only fully non-null rows
             subset = x[required_cols].dropna(how='any')
             if not subset.empty:
                 expected = subset['net_operating_cash_flow'] + subset['net_investing_cash_flow'] + subset['net_financing_cash_flow']
@@ -553,8 +589,26 @@ class IDXFinancialValidator(DataValidator):
                             "extreme_pct_changes": extreme_pct_changes.tolist(),
                             "avg_abs_change": round(avg_abs_change, 2),
                             "message": f"Symbol {symbol}: {metric} shows multiple extreme annual changes (>75%) in years {years_affected}. Average absolute change: {avg_abs_change:.1f}%",
-                            "severity": "warning"
+                            "severity": "error"
                         })
+            # Revenue should be greater than earnings
+            if all(col in data.columns for col in ['revenue', 'earnings']):
+                rev = pd.to_numeric(data['revenue'], errors='coerce')
+                earn = pd.to_numeric(data['earnings'], errors='coerce')
+                mask = rev.notna() & earn.notna() & (rev <= earn)
+                for idx in data[mask].index:
+                    date_val = data.loc[idx].get('date')
+                    date_str = date_val.strftime('%Y-%m-%d') if isinstance(date_val, (pd.Timestamp, datetime)) else date_val
+                    anomalies.append({
+                        "type": "business_rule_violation",
+                        "metric": "revenue>earnings",
+                        "message": "Revenue should be greater than Earnings (annual)",
+                        "symbol": data.loc[idx].get('symbol'),
+                        "date": date_str,
+                        "revenue": float(rev.loc[idx]) if pd.notna(rev.loc[idx]) else None,
+                        "earnings": float(earn.loc[idx]) if pd.notna(earn.loc[idx]) else None,
+                        "severity": "error"
+                    })
             # Tambah Metrik 1 & 2 (hanya yang akurat)
             # Only run identity/ratio checks if we have sufficient data volume
             if len(data) > 10:  # Avoid ratio checks on small datasets
@@ -636,8 +690,26 @@ class IDXFinancialValidator(DataValidator):
                             "extreme_pct_changes": extreme_pct_changes.tolist(),
                             "avg_abs_change": round(avg_abs_change, 2),
                             "message": f"Symbol {symbol}: {metric} shows multiple extreme quarterly changes (>100%) in periods {periods_affected}. Average absolute change: {avg_abs_change:.1f}%",
-                            "severity": "warning"
+                            "severity": "error"
                         })
+            # total_revenue should be greater than earnings
+            if all(col in data.columns for col in ['total_revenue', 'earnings']):
+                trev = pd.to_numeric(data['total_revenue'], errors='coerce')
+                earn = pd.to_numeric(data['earnings'], errors='coerce')
+                mask = trev.notna() & earn.notna() & (trev <= earn)
+                for idx in data[mask].index:
+                    date_val = data.loc[idx].get('date')
+                    date_str = date_val.strftime('%Y-%m-%d') if isinstance(date_val, (pd.Timestamp, datetime)) else date_val
+                    anomalies.append({
+                        "type": "business_rule_violation",
+                        "metric": "revenue>earnings",
+                        "message": "Total Revenue should be greater than Earnings (quarterly)",
+                        "symbol": data.loc[idx].get('symbol'),
+                        "date": date_str,
+                        "total_revenue": float(trev.loc[idx]) if pd.notna(trev.loc[idx]) else None,
+                        "earnings": float(earn.loc[idx]) if pd.notna(earn.loc[idx]) else None,
+                        "severity": "error"
+                    })
             # Tambah Metrik 1 & 2 (hanya yang akurat)
             # Only run identity/ratio checks if we have sufficient data volume
             if len(data) > 10:  # Avoid ratio checks on small datasets
@@ -711,6 +783,187 @@ class IDXFinancialValidator(DataValidator):
                 "message": f"Error validating daily data: {str(e)}",
                 "severity": "error"
             })
+        return {"anomalies": anomalies}
+
+    async def _validate_sgx_company_report(self, data: pd.DataFrame) -> Dict[str, Any]:
+        """
+        Validate sgx_company_report table (Top 50 companies by market cap)
+        Rules:
+        1) market_cap and volume must be non-null
+        2) close: latest available date equals today's date
+        3) historical_financials: percent change per period checks
+        """
+        anomalies: List[Dict[str, Any]] = []
+        try:
+            x = data.copy()
+            print(f"🏢 [SGX Validator] Validating {len(x)} companies (top 50 by market cap)")
+            
+            # Normalize dates if present
+            if 'date' in x.columns:
+                try:
+                    x['date'] = pd.to_datetime(x['date'], errors='coerce')
+                except Exception:
+                    pass
+
+            # 1) market_cap and volume not null
+            for col in ['market_cap', 'volume']:
+                if col not in x.columns:
+                    anomalies.append({
+                        "type": "missing_required_columns",
+                        "columns": [col],
+                        "message": f"Missing required column: {col}",
+                        "severity": "error"
+                    })
+                else:
+                    null_mask = x[col].isna()
+                    for idx in x[null_mask].index:
+                        date_val = x.loc[idx].get('date')
+                        date_str = date_val.strftime('%Y-%m-%d') if isinstance(date_val, (pd.Timestamp, datetime)) else date_val
+                        anomalies.append({
+                            "type": "data_missing",
+                            "metric": col,
+                            "message": f"{col} is null",
+                            "symbol": x.loc[idx].get('symbol'),
+                            "date": date_str,
+                            "severity": "error"
+                        })
+
+            # 2) close latest date equals today's UTC date
+            if 'close' not in x.columns:
+                anomalies.append({
+                    "type": "missing_required_columns",
+                    "columns": ["close"],
+                    "message": "Missing required column: close",
+                    "severity": "error"
+                })
+            else:
+                # Use Singapore date (UTC+8)
+                try:
+                    sg_tz = pytz.timezone('Asia/Singapore')
+                    today_sg = datetime.now(sg_tz).date()
+                except Exception:
+                    # Fallback: system local date if timezone not available
+                    today_sg = datetime.now().date()
+                for idx, r in x.iterrows():
+                    sym = r.get('symbol')
+                    close_obj = r.get('close')
+                    latest_date = None
+                    try:
+                        # close may be a dict of date->price
+                        if isinstance(close_obj, dict):
+                            if len(close_obj) > 0:
+                                # keys as dates
+                                date_keys = []
+                                for k in close_obj.keys():
+                                    try:
+                                        date_keys.append(pd.to_datetime(k, errors='coerce'))
+                                    except Exception:
+                                        date_keys.append(pd.NaT)
+                                date_keys = [d for d in date_keys if pd.notna(d)]
+                                if date_keys:
+                                    latest_date = max(date_keys).date()
+                        # alternatively list of dicts or list of [date, value]
+                        elif isinstance(close_obj, list) and len(close_obj) > 0:
+                            # try to parse items
+                            parsed_dates = []
+                            for item in close_obj:
+                                if isinstance(item, dict):
+                                    # common keys
+                                    for key in ['date', 'Date', 'timestamp']:
+                                        if key in item:
+                                            parsed_dates.append(pd.to_datetime(item[key], errors='coerce'))
+                                            break
+                                elif isinstance(item, (list, tuple)) and len(item) >= 1:
+                                    parsed_dates.append(pd.to_datetime(item[0], errors='coerce'))
+                            parsed_dates = [d for d in parsed_dates if pd.notna(d)]
+                            if parsed_dates:
+                                latest_date = max(parsed_dates).date()
+                    except Exception:
+                        latest_date = None
+
+                    if latest_date is None:
+                        anomalies.append({
+                            "type": "data_missing",
+                            "metric": "close.latest_date",
+                            "message": "Unable to determine latest close date",
+                            "symbol": sym,
+                            "severity": "error"
+                        })
+                    else:
+                        if latest_date != today_sg:
+                            anomalies.append({
+                                "type": "staleness",
+                                "metric": "close.latest_date",
+                                "message": f"Latest close date {latest_date} does not equal today's Singapore date {today_sg}",
+                                "symbol": sym,
+                                "latest_close_date": latest_date.isoformat(),
+                                "today_sg": today_sg.isoformat(),
+                                "severity": "warning"
+                            })
+
+            # 3) historical_financials percent-change checks
+            if 'historical_financials' not in x.columns:
+                anomalies.append({
+                    "type": "missing_required_columns",
+                    "columns": ["historical_financials"],
+                    "message": "Missing required column: historical_financials",
+                    "severity": "warning"
+                })
+            else:
+                metrics = ['revenue', 'earnings', 'total_assets', 'total_equity', 'operating_pnl']
+                for idx, r in x.iterrows():
+                    sym = r.get('symbol')
+                    hf = r.get('historical_financials')
+                    if not isinstance(hf, (list, tuple)) or len(hf) < 2:
+                        continue
+                    # Build DataFrame
+                    try:
+                        hdf = pd.DataFrame(hf)
+                    except Exception:
+                        continue
+                    # Determine time axis
+                    sort_col = None
+                    for c in ['date', 'Date', 'period', 'year', 'Year']:
+                        if c in hdf.columns:
+                            sort_col = c
+                            break
+                    if sort_col is None:
+                        continue
+                    # Parse to datetime if looks like date
+                    if sort_col.lower() in ['date', 'timestamp']:
+                        hdf[sort_col] = pd.to_datetime(hdf[sort_col], errors='coerce')
+                    hdf = hdf.sort_values(sort_col)
+                    # Compute percent changes similar to quarterly (stricter)
+                    for m in [m for m in metrics if m in hdf.columns]:
+                        series = pd.to_numeric(hdf[m], errors='coerce')
+                        pct = series.pct_change(fill_method=None) * 100
+                        changes = pct.dropna()
+                        if changes.empty:
+                            continue
+                        avg_abs_change = changes.abs().mean()
+                        extreme = changes[(changes.abs() > 100) & (changes.abs() > (avg_abs_change * 2.5))]
+                        if len(extreme) > 1:
+                            # derive periods affected for messaging
+                            periods = hdf.loc[pct.abs() > 100, sort_col].tolist()
+                            periods = [p.strftime('%Y-%m-%d') if isinstance(p, (pd.Timestamp, datetime)) else str(p) for p in periods]
+                            anomalies.append({
+                                "type": "extreme_change_sgx",
+                                "metric": m,
+                                "symbol": sym,
+                                "periods_affected": periods,
+                                "extreme_pct_changes": extreme.tolist(),
+                                "avg_abs_change": round(float(avg_abs_change), 2),
+                                "message": f"{sym}: {m} shows multiple extreme period changes (>100%) in {periods}. Avg abs change: {avg_abs_change:.1f}%",
+                                "severity": "warning"
+                            })
+
+        except Exception as e:
+            anomalies.append({
+                "type": "validation_error",
+                "message": f"Error validating sgx_company_report: {str(e)}",
+                "severity": "error"
+            })
+
         return {"anomalies": anomalies}
     
     async def _validate_dividend(self, data: pd.DataFrame) -> Dict[str, Any]:
@@ -874,6 +1127,75 @@ class IDXFinancialValidator(DataValidator):
                 for json_type, logic_name in type_map.items():
                     if json_type in row and pd.notna(row[json_type]):
                         values[logic_name] = float(row[json_type])
+
+                # Cross-check each recorded high/low against daily data windows
+                try:
+                    daily_data = await self._fetch_ticker_data('idx_daily_data', symbol)
+                except Exception:
+                    daily_data = None
+
+                tol = 1e-6  # small numeric tolerance
+                if daily_data is not None and not daily_data.empty:
+                    dd = daily_data.copy()
+                    if 'date' in dd.columns:
+                        dd['date'] = pd.to_datetime(dd['date'], errors='coerce')
+                    else:
+                        dd['date'] = pd.NaT
+                    # Ensure close column is numeric
+                    if 'close' in dd.columns:
+                        dd['close'] = pd.to_numeric(dd['close'], errors='coerce')
+                    # Filter to this symbol if symbol column exists
+                    if 'symbol' in dd.columns:
+                        dd = dd[dd['symbol'] == symbol]
+                    # Drop rows without required fields
+                    dd = dd.dropna(subset=['date', 'close']) if {'date','close'}.issubset(dd.columns) else pd.DataFrame()
+
+                    if not dd.empty:
+                        jakarta_tz = pytz.timezone('Asia/Jakarta')
+                        today = pd.Timestamp(datetime.now(jakarta_tz).date())
+                        start_90d = today - pd.Timedelta(days=90)
+                        start_52w = today - pd.Timedelta(weeks=52)
+                        start_ytd = pd.Timestamp(today.year, 1, 1)
+
+                        # Windowed subsets
+                        dd_90d = dd[(dd['date'] >= start_90d) & (dd['date'] <= today)]
+                        dd_52w = dd[(dd['date'] >= start_52w) & (dd['date'] <= today)]
+                        dd_ytd = dd[(dd['date'] >= start_ytd) & (dd['date'] <= today)]
+
+                        # Compute mins/maxes where applicable
+                        def _safe_max(frame):
+                            return float(frame['close'].max()) if not frame.empty else None
+                        def _safe_min(frame):
+                            return float(frame['close'].min()) if not frame.empty else None
+
+                        max_all = _safe_max(dd)
+                        min_all = _safe_min(dd)
+                        max_90d = _safe_max(dd_90d)
+                        min_90d = _safe_min(dd_90d)
+                        max_52w = _safe_max(dd_52w)
+                        min_52w = _safe_min(dd_52w)
+                        max_ytd = _safe_max(dd_ytd)
+                        min_ytd = _safe_min(dd_ytd)
+
+                        # High checks: recorded should be >= daily max
+                        if '90d_high' in values and max_90d is not None and values['90d_high'] + tol < max_90d:
+                            issues.append(f"90d_high {values['90d_high']:.1f} < daily max 90d {max_90d:.1f} in {max}")
+                        if '52w_high' in values and max_52w is not None and values['52w_high'] + tol < max_52w:
+                            issues.append(f"52w_high {values['52w_high']:.1f} < daily max 52w {max_52w:.1f}")
+                        if 'ytd_high' in values and max_ytd is not None and values['ytd_high'] + tol < max_ytd:
+                            issues.append(f"ytd_high {values['ytd_high']:.1f} < daily max ytd {max_ytd:.1f}")
+                        if 'all_time_high' in values and max_all is not None and values['all_time_high'] + tol < max_all:
+                            issues.append(f"all_time_high {values['all_time_high']:.1f} < daily max all_time {max_all:.1f}")
+
+                        # Low checks: recorded should be <= daily min
+                        if '90d_low' in values and min_90d is not None and values['90d_low'] - tol > min_90d:
+                            issues.append(f"90d_low {values['90d_low']:.1f} > daily min 90d {min_90d:.1f}")
+                        if '52w_low' in values and min_52w is not None and values['52w_low'] - tol > min_52w:
+                            issues.append(f"52w_low {values['52w_low']:.1f} > daily min 52w {min_52w:.1f}")
+                        if 'ytd_low' in values and min_ytd is not None and values['ytd_low'] - tol > min_ytd:
+                            issues.append(f"ytd_low {values['ytd_low']:.1f} > daily min ytd {min_ytd:.1f}")
+                        if 'all_time_low' in values and min_all is not None and values['all_time_low'] - tol > min_all:
+                            issues.append(f"all_time_low {values['all_time_low']:.1f} > daily min all_time {min_all:.1f}")
 
                 # Check highs
                 high_hierarchy = ['90d_high', 'ytd_high', '52w_high', 'all_time_high']
@@ -1047,4 +1369,131 @@ class IDXFinancialValidator(DataValidator):
                 "message": f"Error validating stock split data: {str(e)}",
                 "severity": "error"
             })
+        return {"anomalies": anomalies}
+
+    async def _validate_sgx_manual_input(self, data: pd.DataFrame) -> Dict[str, Any]:
+        """
+        Validate SGX manual input data (Top 50 companies by market cap) with two specific rules:
+        1. industry_breakdown.customer_breakdown.sum(revenue) <= income_stmt_metrics.total_revenue
+        2. industry_breakdown.property_counts_by_country.sum(value1) <= income_stmt_metrics.total_revenue
+        """
+        anomalies = []
+        
+        try:
+            # Convert DataFrame to list of dictionaries
+            if isinstance(data, pd.DataFrame):
+                data_list = data.to_dict('records')
+                print(f"🏢 [SGX Manual Input Validator] Validating {len(data_list)} companies (top 50 by market cap)")
+            else:
+                data_list = data  # Backward compatibility
+                print(f"🏢 [SGX Manual Input Validator] Validating {len(data_list)} companies")
+            
+            for record in data_list:
+                symbol = record.get('symbol', 'Unknown')
+                financial_year = record.get('financial_year', 'Unknown')
+                
+                # Get the reference total revenue
+                income_stmt = record.get('income_stmt_metrics', {})
+                total_revenue = income_stmt.get('total_revenue')
+                
+                if total_revenue is None:
+                    anomalies.append({
+                        "type": "missing_required_data",
+                        "symbol": symbol,
+                        "financial_year": financial_year,
+                        "message": f"Missing income_stmt_metrics.total_revenue for {symbol} ({financial_year})",
+                        "severity": "error"
+                    })
+                    continue
+                
+                industry_breakdown = record.get('industry_breakdown', {})
+                
+                # Validation Rule 1: customer_breakdown sum <= total_revenue
+                customer_breakdown = industry_breakdown.get('customer_breakdown', {})
+                if customer_breakdown:
+                    try:
+                        customer_sum = 0
+                        customer_details = []
+                        
+                        # Handle different data types in customer_breakdown
+                        if isinstance(customer_breakdown, dict):
+                            for customer_type, value in customer_breakdown.items():
+                                if isinstance(value, (int, float)) and value is not None:
+                                    customer_sum += value
+                                    customer_details.append(f"{customer_type}: {value:,.0f}")
+                                elif isinstance(value, list) and len(value) > 0:
+                                    # Handle array format - sum all numeric values
+                                    for item in value:
+                                        if isinstance(item, (int, float)) and item is not None:
+                                            customer_sum += item
+                                    customer_details.append(f"{customer_type}: {value}")
+                        
+                        if customer_sum > total_revenue:
+                            anomalies.append({
+                                "type": "business_rule_violation",
+                                "symbol": symbol,
+                                "financial_year": financial_year,
+                                "metric": "customer_breakdown_sum",
+                                "message": f"Customer breakdown sum ({customer_sum:,.0f}) exceeds total revenue ({total_revenue:,.0f}) for {symbol} ({financial_year}). Details: {'; '.join(customer_details[:3])}{'...' if len(customer_details) > 3 else ''}",
+                                "customer_breakdown_sum": customer_sum,
+                                "total_revenue": total_revenue,
+                                "difference": customer_sum - total_revenue,
+                                "difference_pct": ((customer_sum - total_revenue) / total_revenue * 100) if total_revenue != 0 else 0,
+                                "severity": "error"
+                            })
+                    except Exception as e:
+                        anomalies.append({
+                            "type": "validation_error",
+                            "symbol": symbol,
+                            "financial_year": financial_year,
+                            "message": f"Error processing customer_breakdown for {symbol} ({financial_year}): {str(e)}",
+                            "severity": "error"
+                        })
+                
+                # Validation Rule 2: property_counts_by_country sum(value1) <= total_revenue
+                property_counts = industry_breakdown.get('property_counts_by_country', {})
+                if property_counts:
+                    try:
+                        property_sum = 0
+                        property_details = []
+                        
+                        for country, properties in property_counts.items():
+                            if isinstance(properties, dict):
+                                for property_type, property_data in properties.items():
+                                    if isinstance(property_data, list) and len(property_data) >= 2:
+                                        # Extract value1 (index 1) from [count, value1, value2]
+                                        value1 = property_data[1]
+                                        if isinstance(value1, (int, float)) and value1 is not None:
+                                            property_sum += value1
+                                            property_details.append(f"{country}-{property_type}: {value1:,.0f}")
+                        
+                        if property_sum > total_revenue:
+                            anomalies.append({
+                                "type": "business_rule_violation", 
+                                "symbol": symbol,
+                                "financial_year": financial_year,
+                                "metric": "property_counts_sum",
+                                "message": f"Property counts sum ({property_sum:,.0f}) exceeds total revenue ({total_revenue:,.0f}) for {symbol} ({financial_year}). Details: {'; '.join(property_details[:3])}{'...' if len(property_details) > 3 else ''}",
+                                "property_counts_sum": property_sum,
+                                "total_revenue": total_revenue,
+                                "difference": property_sum - total_revenue,
+                                "difference_pct": ((property_sum - total_revenue) / total_revenue * 100) if total_revenue != 0 else 0,
+                                "severity": "error"
+                            })
+                    except Exception as e:
+                        anomalies.append({
+                            "type": "validation_error",
+                            "symbol": symbol,
+                            "financial_year": financial_year,
+                            "message": f"Error processing property_counts_by_country for {symbol} ({financial_year}): {str(e)}",
+                            "severity": "error"
+                        })
+                        
+        except Exception as e:
+            anomalies.append({
+                "type": "validation_error",
+                "message": f"Error validating SGX manual input data: {str(e)}",
+                "severity": "error"
+            })
+            
         return {"anomalies": anomalies}

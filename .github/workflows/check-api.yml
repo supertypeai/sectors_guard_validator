@@ -8,7 +8,7 @@ on:
         required: false
         default: ''
   schedule:
-    - cron: '15 8 * * 4'
+    - cron: '0 8 15 * *' # Run monthly on the 15th at 8 AM UTC
 
 jobs:
   call_api:

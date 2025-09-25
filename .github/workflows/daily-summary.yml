@@ -24,7 +24,6 @@ jobs:
 
     - name: Install Python dependencies
       run: |
-        cd backend
         python -m pip install --upgrade pip
         pip install -r requirements.txt
 
@@ -38,7 +37,6 @@ jobs:
 
     - name: Generate and send daily summary
       run: |
-        cd backend
         python -c "
         import asyncio
         import sys
@@ -140,7 +138,6 @@ jobs:
     - name: Create summary artifact
       if: always()
       run: |
-        cd backend
         python -c "
         import json
         from datetime import datetime, timedelta
@@ -166,5 +163,5 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: daily-summary-${{ github.run_id }}
-        path: backend/daily_summary_artifact.json
+        path: daily_summary_artifact.json
         retention-days: 30

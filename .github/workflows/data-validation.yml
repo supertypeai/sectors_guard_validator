@@ -2,20 +2,20 @@ name: IDX Data Validation Schedules
 
 on:
   schedule:
-    # Annual financials - Every January 1st at 2 AM UTC
-    - cron: '0 2 1 1 *'
-    # Quarterly financials - Every 1st of quarter (Jan, Apr, Jul, Oct) at 3 AM UTC  
-    - cron: '0 3 1 1,4,7,10 *'
-    # Daily data - Every Monday at 1 AM UTC
+    # Annual financials - 3x a year (Mar, Apr, Jun) on the 16th at 2 AM UTC
+    - cron: '0 2 16 3,4,6 *'
+    # Quarterly financials - Monthly on the 1st at 3 AM UTC  
+    - cron: '0 3 1 * *'
+    # Daily data - Weekly every Monday at 1 AM UTC
     - cron: '0 1 * * 1'
-    # Dividend - Every 1st of month at 4 AM UTC
+    # Dividend - Monthly on the 1st at 4 AM UTC
     - cron: '0 4 1 * *'
-    # All-time price - Every January 1st at 5 AM UTC
-    - cron: '0 5 1 1 *'
-    # Filings - Every 1st of quarter at 6 AM UTC
-    - cron: '0 6 1 1,4,7,10 *'
-    # Stock split - Every 1st of Jan and Jul (6 months) at 7 AM UTC
-    - cron: '0 7 1 1,7 *'
+    # All-time price - Daily at 5 AM UTC
+    - cron: '0 5 * * *'
+    # Filings - Weekly every Monday at 6 AM UTC
+    - cron: '0 6 * * 1'
+    # Stock split - Monthly on the 1st at 7 AM UTC
+    - cron: '0 7 1 * *'
   workflow_dispatch:
     inputs:
       validation_type:
@@ -50,72 +50,86 @@ jobs:
         month=$(date +%m)
         day=$(date +%d)
         weekday=$(date +%u)  # 1=Monday, 7=Sunday
+        validation_tables=""
         
         # Manual trigger
         if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
           case "${{ github.event.inputs.validation_type }}" in
             "annual")
-              echo "validation_tables=idx_combine_financials_annual" >> $GITHUB_OUTPUT
+              validation_tables=idx_combine_financials_annual
+              echo "validation_tables=$validation_tables" >> $GITHUB_OUTPUT
               ;;
             "quarterly")
-              echo "validation_tables=idx_combine_financials_quarterly" >> $GITHUB_OUTPUT
+              validation_tables=idx_combine_financials_quarterly
+              echo "validation_tables=$validation_tables" >> $GITHUB_OUTPUT
               ;;
             "daily")
-              echo "validation_tables=idx_daily_data" >> $GITHUB_OUTPUT
+              validation_tables=idx_daily_data
+              echo "validation_tables=$validation_tables" >> $GITHUB_OUTPUT
               ;;
             "dividend")
-              echo "validation_tables=idx_dividend" >> $GITHUB_OUTPUT
+              validation_tables=idx_dividend
+              echo "validation_tables=$validation_tables" >> $GITHUB_OUTPUT
               ;;
             "alltime")
-              echo "validation_tables=idx_all_time_price" >> $GITHUB_OUTPUT
+              validation_tables=idx_all_time_price
+              echo "validation_tables=$validation_tables" >> $GITHUB_OUTPUT
               ;;
             "filings")
-              echo "validation_tables=idx_filings" >> $GITHUB_OUTPUT
+              validation_tables=idx_filings
+              echo "validation_tables=$validation_tables" >> $GITHUB_OUTPUT
               ;;
             "stocksplit")
-              echo "validation_tables=idx_stock_split" >> $GITHUB_OUTPUT
+              validation_tables=idx_stock_split
+              echo "validation_tables=$validation_tables" >> $GITHUB_OUTPUT
               ;;
             "all")
-              echo "validation_tables=idx_combine_financials_annual,idx_combine_financials_quarterly,idx_daily_data,idx_dividend,idx_all_time_price,idx_filings,idx_stock_split" >> $GITHUB_OUTPUT
+              validation_tables=idx_combine_financials_annual,idx_combine_financials_quarterly,idx_daily_data,idx_dividend,idx_all_time_price,idx_filings,idx_stock_split
+              echo "validation_tables=$validation_tables" >> $GITHUB_OUTPUT
               ;;
           esac
         else
           # Scheduled trigger - determine based on schedule
           hour=$(date +%H)
           case $hour in
-            2)  # 2 AM - Annual (Jan 1)
-              if [ "$month" = "01" ] && [ "$day" = "01" ]; then
-                echo "validation_tables=idx_combine_financials_annual" >> $GITHUB_OUTPUT
+            2)  # 2 AM - Annual (Mar, Apr, Jun on the 16th)
+              if [ "$day" = "16" ] && ([ "$month" = "03" ] || [ "$month" = "04" ] || [ "$month" = "06" ]); then
+                validation_tables=idx_combine_financials_annual
+                echo "validation_tables=$validation_tables" >> $GITHUB_OUTPUT
               fi
               ;;
-            3)  # 3 AM - Quarterly (Jan, Apr, Jul, Oct 1st)
-              if [ "$day" = "01" ] && ([ "$month" = "01" ] || [ "$month" = "04" ] || [ "$month" = "07" ] || [ "$month" = "10" ]); then
-                echo "validation_tables=idx_combine_financials_quarterly" >> $GITHUB_OUTPUT
+            3)  # 3 AM - Quarterly (Monthly on the 1st)
+              if [ "$day" = "01" ]; then
+                validation_tables=idx_combine_financials_quarterly
+                echo "validation_tables=$validation_tables" >> $GITHUB_OUTPUT
               fi
               ;;
             1)  # 1 AM - Daily (Mondays)
               if [ "$weekday" = "1" ]; then
-                echo "validation_tables=idx_daily_data" >> $GITHUB_OUTPUT
+                validation_tables=idx_daily_data
+                echo "validation_tables=$validation_tables" >> $GITHUB_OUTPUT
               fi
               ;;
-            4)  # 4 AM - Dividend (1st of month)
+            4)  # 4 AM - Dividend (Monthly on the 1st)
               if [ "$day" = "01" ]; then
-                echo "validation_tables=idx_dividend" >> $GITHUB_OUTPUT
+                validation_tables=idx_dividend
+                echo "validation_tables=$validation_tables" >> $GITHUB_OUTPUT
               fi
               ;;
-            5)  # 5 AM - All-time price (Jan 1)
-              if [ "$month" = "01" ] && [ "$day" = "01" ]; then
-                echo "validation_tables=idx_all_time_price" >> $GITHUB_OUTPUT
+            5)  # 5 AM - All-time price (Daily)
+              validation_tables=idx_all_time_price
+              echo "validation_tables=$validation_tables" >> $GITHUB_OUTPUT
+              ;;
+            6)  # 6 AM - Filings (Weekly on Mondays)
+              if [ "$weekday" = "1" ]; then
+                validation_tables=idx_filings
+                echo "validation_tables=$validation_tables" >> $GITHUB_OUTPUT
               fi
               ;;
-            6)  # 6 AM - Filings (quarterly)
-              if [ "$day" = "01" ] && ([ "$month" = "01" ] || [ "$month" = "04" ] || [ "$month" = "07" ] || [ "$month" = "10" ]); then
-                echo "validation_tables=idx_filings" >> $GITHUB_OUTPUT
-              fi
-              ;;
-            7)  # 7 AM - Stock split (Jan, Jul 1st)
-              if [ "$day" = "01" ] && ([ "$month" = "01" ] || [ "$month" = "07" ]); then
-                echo "validation_tables=idx_stock_split" >> $GITHUB_OUTPUT
+            7)  # 7 AM - Stock split (Monthly on the 1st)
+              if [ "$day" = "01" ]; then
+                validation_tables=idx_stock_split
+                echo "validation_tables=$validation_tables" >> $GITHUB_OUTPUT
               fi
               ;;
           esac
@@ -123,7 +137,8 @@ jobs:
         
         # Fallback if nothing determined
         if [ -z "$validation_tables" ]; then
-          echo "validation_tables=none" >> $GITHUB_OUTPUT
+          validation_tables=none
+          echo "validation_tables=$validation_tables" >> $GITHUB_OUTPUT
         fi
 
   data-validation:
@@ -144,13 +159,12 @@ jobs:
       uses: actions/cache@v3
       with:
         path: ~/.cache/pip
-        key: ${{ runner.os }}-pip-${{ hashFiles('backend/requirements.txt') }}
+        key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
         restore-keys: |
           ${{ runner.os }}-pip-
 
     - name: Install Python dependencies
       run: |
-        cd backend
         python -m pip install --upgrade pip
         pip install -r requirements.txt
 
@@ -166,7 +180,6 @@ jobs:
       env:
         TABLES_TO_VALIDATE: ${{ needs.determine-validation-type.outputs.validation_tables }}
       run: |
-        cd backend
         python -c "
         import asyncio
         import sys
@@ -263,7 +276,6 @@ jobs:
     - name: Create validation report
       if: always()
       run: |
-        cd backend
         python -c "
         import json
         from datetime import datetime
@@ -308,8 +320,8 @@ jobs:
       with:
         name: validation-report-${{ github.run_id }}
         path: |
-          backend/validation_report.json
-          backend/validation_results.json
+          validation_report.json
+          validation_results.json
         retention-days: 30
         if-no-files-found: warn
 

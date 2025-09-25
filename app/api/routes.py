@@ -69,6 +69,18 @@ async def get_tables():
                 "description": "Stock split timing validation",
                 "validation_type": "Stock Split Analysis",
                 "rules": "Multiple stock splits within 2 weeks for same symbol"
+            },
+            {
+                "name": "sgx_company_report",
+                "description": "SGX company fundamentals and price freshness",
+                "validation_type": "SGX Company Report Validation",
+                "rules": "market_cap & volume not null; latest close date is today (UTC); historical_financials extreme change checks"
+            },
+            {
+                "name": "sgx_manual_input",
+                "description": "SGX manual input data - Business logic validation",
+                "validation_type": "SGX Manual Input Validation", 
+                "rules": "customer_breakdown sum <= total_revenue; property_counts sum <= total_revenue"
             }
         ]
         
@@ -450,6 +462,29 @@ async def get_table_validation_config(table_name: str):
                     "time_window_threshold": 14,
                     "metrics": ["split_ratio", "date"],
                     "alert_condition": "multiple stock splits within 2 weeks for same symbol"
+                }
+            },
+            "sgx_company_report": {
+                "table_name": table_name,
+                "validation_type": "SGX Company Report Validation",
+                "description": "SGX company fundamentals and price freshness validation",
+                "rules": {
+                    "required_non_null": ["market_cap", "volume"],
+                    "close_recency": "latest close date must equal today's UTC date",
+                    "historical_financials_metrics": ["revenue", "earnings", "total_assets", "total_equity", "operating_pnl"],
+                    "extreme_change_threshold": 100,
+                    "alert_condition": "market_cap & volume not null; latest close date is today (UTC); historical_financials extreme change checks"
+                }
+            },
+            "sgx_manual_input": {
+                "table_name": table_name,
+                "validation_type": "SGX Manual Input Validation",
+                "description": "SGX manual input data business logic validation",
+                "rules": {
+                    "customer_breakdown_validation": "sum of customer_breakdown values must be <= income_stmt_metrics.total_revenue",
+                    "property_counts_validation": "sum of property_counts_by_country value1 must be <= income_stmt_metrics.total_revenue",
+                    "metrics": ["customer_breakdown", "property_counts_by_country", "total_revenue"],
+                    "alert_condition": "customer_breakdown sum <= total_revenue; property_counts sum <= total_revenue"
                 }
             }
         }
