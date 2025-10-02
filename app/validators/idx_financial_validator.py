@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 import re
 import asyncio
 import pytz
+import json
 
 from .data_validator import DataValidator
 from ..database.connection import get_supabase_client
@@ -29,7 +30,8 @@ class IDXFinancialValidator(DataValidator):
             'idx_stock_split': self._validate_stock_split,
             'idx_news': self._validate_news,
             'sgx_company_report': self._validate_sgx_company_report,
-            'sgx_manual_input': self._validate_sgx_manual_input
+            'sgx_manual_input': self._validate_sgx_manual_input,
+            'idx_company_profile': self._validate_company_profile
         }
     
     async def validate_table(self, table_name: str, start_date: Optional[str] = None, end_date: Optional[str] = None, run_only_coverage: bool = False) -> Dict[str, Any]:
@@ -915,7 +917,7 @@ class IDXFinancialValidator(DataValidator):
                             "date": row['date'].strftime('%Y-%m-%d'),
                             "close_price": float(row['close']),
                             "price_change_pct": round(float(row['price_pct_change']), 2),
-                            "message": f"Symbol {symbol} on {row['date'].strftime('%Y-%m-%d')}: Close price changed by {row['price_pct_change']:.1f}% (close: {row['close']})",
+                            "message": f"Symbol {symbol} on {row['date'].strftime('%Y-%m-%d')}: Extreme daily price change detected",
                             "severity": "warning"
                         })
 
@@ -1621,7 +1623,7 @@ class IDXFinancialValidator(DataValidator):
                                 "filing_price": filing_price,
                                 "daily_close_price": daily_close,
                                 "price_difference_pct": round(price_diff_pct, 2),
-                                "message": f"Ticker {ticker} on {filing_date}: Filing price {filing_price} differs from daily close {daily_close} by {price_diff_pct:.1f}% (>= 50%)",
+                                "message": f"Ticker {ticker} on {filing_date}: Filing price differs significantly from daily close",
                                 "severity": "warning"
                             })
                 except (ValueError, TypeError):
@@ -1682,7 +1684,7 @@ class IDXFinancialValidator(DataValidator):
                             "days_between": days_diff,
                             "first_split_ratio": float(current_split['split_ratio']),
                             "second_split_ratio": float(next_split['split_ratio']),
-                            "message": f"Symbol {symbol}: Two stock splits within {days_diff} days ({current_split['date'].strftime('%Y-%m-%d')} and {next_split['date'].strftime('%Y-%m-%d')})",
+                            "message": f"Symbol {symbol}: Two stock splits occurred within a short timeframe",
                             "severity": "warning"
                         })
         except Exception as e:
@@ -1851,11 +1853,12 @@ class IDXFinancialValidator(DataValidator):
                                 "symbol": symbol,
                                 "financial_year": financial_year,
                                 "metric": "customer_breakdown_sum",
-                                "message": f"Customer breakdown sum ({customer_sum:,.0f}) exceeds total revenue ({total_revenue:,.0f}) for {symbol} ({financial_year}). Details: {'; '.join(customer_details[:3])}{'...' if len(customer_details) > 3 else ''}",
+                                "message": f"Customer breakdown sum exceeds total revenue for {symbol} ({financial_year})",
                                 "customer_breakdown_sum": customer_sum,
                                 "total_revenue": total_revenue,
                                 "difference": customer_sum - total_revenue,
                                 "difference_pct": ((customer_sum - total_revenue) / total_revenue * 100) if total_revenue != 0 else 0,
+                                "customer_details": customer_details[:3],
                                 "severity": "error"
                             })
                     except Exception as e:
@@ -1890,11 +1893,12 @@ class IDXFinancialValidator(DataValidator):
                                 "symbol": symbol,
                                 "financial_year": financial_year,
                                 "metric": "property_counts_sum",
-                                "message": f"Property counts sum ({property_sum:,.0f}) exceeds total revenue ({total_revenue:,.0f}) for {symbol} ({financial_year}). Details: {'; '.join(property_details[:3])}{'...' if len(property_details) > 3 else ''}",
+                                "message": f"Property counts sum exceeds total revenue for {symbol} ({financial_year})",
                                 "property_counts_sum": property_sum,
                                 "total_revenue": total_revenue,
                                 "difference": property_sum - total_revenue,
                                 "difference_pct": ((property_sum - total_revenue) / total_revenue * 100) if total_revenue != 0 else 0,
+                                "property_details": property_details[:3],
                                 "severity": "error"
                             })
                     except Exception as e:
@@ -1913,4 +1917,125 @@ class IDXFinancialValidator(DataValidator):
                 "severity": "error"
             })
             
+        return {"anomalies": anomalies}
+
+    async def _validate_company_profile(self, data: pd.DataFrame) -> Dict[str, Any]:
+        """
+        Validate idx_company_profile table
+        Condition: Check if shareholders share_percentage sums to 100% (with 1% tolerance)
+        """
+        anomalies = []
+        try:
+            # Ensure required columns
+            required_cols = ['symbol', 'shareholders']
+            missing_cols = [col for col in required_cols if col not in data.columns]
+            if missing_cols:
+                anomalies.append({
+                    "type": "missing_required_columns",
+                    "columns": missing_cols,
+                    "message": f"Missing required columns: {', '.join(missing_cols)}",
+                    "severity": "error"
+                })
+                return {"anomalies": anomalies}
+
+            for idx, row in data.iterrows():
+                symbol = row.get('symbol')
+                
+                # Validate shareholders
+                shareholders = row.get('shareholders')
+                if shareholders is None or (isinstance(shareholders, float) and pd.isna(shareholders)):
+                    anomalies.append({
+                        "type": "missing_shareholders",
+                        "symbol": symbol,
+                        "message": f"Symbol {symbol} has no shareholders data",
+                        "severity": "warning"
+                    })
+                    continue
+                
+                # Parse shareholders
+                shareholders_list = []
+                if isinstance(shareholders, str):
+                    try:
+                        shareholders_list = json.loads(shareholders)
+                    except json.JSONDecodeError:
+                        anomalies.append({
+                            "type": "invalid_shareholders_format",
+                            "symbol": symbol,
+                            "message": f"Symbol {symbol} has invalid shareholders JSON format",
+                            "severity": "error"
+                        })
+                        continue
+                elif isinstance(shareholders, list):
+                    shareholders_list = shareholders
+                else:
+                    anomalies.append({
+                        "type": "invalid_shareholders_type",
+                        "symbol": symbol,
+                        "message": f"Symbol {symbol} has invalid shareholders data type (expected list or JSON string)",
+                        "severity": "error"
+                    })
+                    continue
+                
+                if not shareholders_list:
+                    anomalies.append({
+                        "type": "empty_shareholders",
+                        "symbol": symbol,
+                        "message": f"Symbol {symbol} has empty shareholders list",
+                        "severity": "warning"
+                    })
+                    continue
+                
+                # Calculate total share_percentage
+                total_percentage = 0.0
+                invalid_entries = []
+                
+                for i, shareholder in enumerate(shareholders_list):
+                    if not isinstance(shareholder, dict):
+                        invalid_entries.append(f"Entry {i+1} is not a valid object")
+                        continue
+                    
+                    share_pct = shareholder.get('share_percentage')
+                    if share_pct is None:
+                        invalid_entries.append(f"{shareholder.get('name', f'Entry {i+1}')} missing share_percentage")
+                        continue
+                    
+                    try:
+                        share_pct_float = float(share_pct)
+                        total_percentage += share_pct_float
+                    except (ValueError, TypeError):
+                        invalid_entries.append(f"{shareholder.get('name', f'Entry {i+1}')} has invalid share_percentage: {share_pct}")
+                
+                if invalid_entries:
+                    anomalies.append({
+                        "type": "invalid_shareholder_entries",
+                        "symbol": symbol,
+                        "message": f"Symbol {symbol} has invalid shareholder entries: {'; '.join(invalid_entries)}",
+                        "severity": "error"
+                    })
+                
+                # Check if total percentage is approximately 100% (with 1% tolerance)
+                # Convert to percentage if values are in decimal (0-1 range)
+                if total_percentage <= 2.0:
+                    total_percentage *= 100
+                
+                tolerance = 1.0  # 1% tolerance
+                expected = 100.0
+                difference = abs(total_percentage - expected)
+                
+                if difference > tolerance:
+                    anomalies.append({
+                        "type": "shareholders_percentage_mismatch",
+                        "symbol": symbol,
+                        "message": f"Symbol {symbol} shareholders percentage sum is {total_percentage:.2f}%, expected ~100%",
+                        "total_percentage": round(total_percentage, 2),
+                        "difference": round(difference, 2),
+                        "severity": "error"
+                    })
+                    
+        except Exception as e:
+            anomalies.append({
+                "type": "validation_error",
+                "message": f"Error validating company profile data: {str(e)}",
+                "severity": "error"
+            })
         return {"anomalies": anomalies}

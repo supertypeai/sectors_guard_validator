@@ -99,6 +99,12 @@ async def get_tables():
                 "description": "SGX manual input data - Business logic validation",
                 "validation_type": "SGX Manual Input Validation", 
                 "rules": "customer_breakdown sum <= total_revenue; property_counts sum <= total_revenue"
+            },
+            {
+                "name": "idx_company_profile",
+                "description": "Company profile validation - Shareholders percentage check",
+                "validation_type": "Company Profile Validation",
+                "rules": "Shareholders share_percentage sum should be ~100% (±1%); sector and industry not empty"
             }
         ]
         
