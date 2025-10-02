@@ -41,10 +41,22 @@ async def get_tables():
                 "rules": "Change >50% vs average change per quarter"
             },
             {
+                "name": "index_daily_data",
+                "description": "Daily index level data - Expect complete coverage per day",
+                "validation_type": "Index Coverage (Daily)",
+                "rules": "Each date must have exactly 18 unique index_code entries"
+            },
+            {
                 "name": "idx_daily_data", 
                 "description": "Daily stock price data - Price movement monitoring (last 7 days)",
                 "validation_type": "Price Movement Monitoring", 
                 "rules": "Close price change >35% in last 7 days"
+            },
+            {
+                "name": "idx_daily_data_completeness",
+                "description": "Daily stock data completeness vs active symbols (yesterday, weekdays only)",
+                "validation_type": "Daily Data (Completeness)",
+                "rules": "Per-date coverage equals active symbols; close, volume, and market_cap are all non-null"
             },
             {
                 "name": "idx_dividend", 
@@ -281,7 +293,7 @@ async def get_dashboard_stats():
         # Get total IDX tables count
         idx_tables = [
             "idx_combine_financials_annual", "idx_combine_financials_quarterly", 
-            "idx_daily_data", "idx_dividend", "idx_all_time_price", 
+            "idx_daily_data", "idx_daily_data_completeness", "idx_dividend", "idx_all_time_price", 
             "idx_filings", "idx_stock_split"
         ]
         total_tables = len(idx_tables)
@@ -587,7 +599,7 @@ async def get_table_status():
         # Get latest validation results for each IDX table
         idx_tables = [
             "idx_combine_financials_annual", "idx_combine_financials_quarterly", 
-            "idx_daily_data", "idx_dividend", "idx_all_time_price", 
+            "idx_daily_data", "idx_daily_data_completeness", "idx_dividend", "idx_all_time_price", 
             "idx_filings", "idx_stock_split"
         ]
         

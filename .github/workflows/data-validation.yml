@@ -2,6 +2,8 @@ name: IDX Data Validation Schedules
 
 on:
   schedule:
+    # Daily completeness/coverage for idx_daily_data - Daily at 12 AM UTC
+    - cron: '0 0 * * *'
     # Annual financials - 3x a year (Mar, Apr, Jun) on the 16th at 2 AM UTC
     - cron: '0 2 16 3,4,6 *'
     # Quarterly financials - Monthly on the 1st at 3 AM UTC  
@@ -16,6 +18,14 @@ on:
     - cron: '0 6 * * 1'
     # Stock split - Monthly on the 1st at 7 AM UTC
     - cron: '0 7 1 * *'
+    # SGX company report - Monthly on the 16th at 07:00 UTC
+    - cron: '0 7 16 * *'
+    # Index daily data - Monthly on the 1st at 8 AM UTC
+    - cron: '0 8 1 * *'
+    # News - Monthly on the 1st at 9 AM UTC
+    - cron: '0 9 1 * *'
+    # SGX manual input - Every 6 months (Jan and Jul) on the 1st at 10 AM UTC
+    - cron: '0 10 1 1,7 *'
   workflow_dispatch:
     inputs:
       validation_type:
@@ -32,6 +42,11 @@ on:
           - 'alltime'
           - 'filings'
           - 'stocksplit'
+          - 'daily_completeness'
+          - 'index_daily'
+          - 'news'
+          - 'sgx_company_report'
+          - 'sgx_manual_input'
 
 env:
   PYTHON_VERSION: '3.11'
@@ -67,6 +82,14 @@ jobs:
               validation_tables=idx_daily_data
               echo "validation_tables=$validation_tables" >> $GITHUB_OUTPUT
               ;;
+            "daily_completeness")
+              validation_tables=idx_daily_data_completeness
+              echo "validation_tables=$validation_tables" >> $GITHUB_OUTPUT
+              ;;
+            "index_daily")
+              validation_tables=index_daily_data
+              echo "validation_tables=$validation_tables" >> $GITHUB_OUTPUT
+              ;;
             "dividend")
               validation_tables=idx_dividend
               echo "validation_tables=$validation_tables" >> $GITHUB_OUTPUT
@@ -83,8 +106,20 @@ jobs:
               validation_tables=idx_stock_split
               echo "validation_tables=$validation_tables" >> $GITHUB_OUTPUT
               ;;
+            "news")
+              validation_tables=idx_news
+              echo "validation_tables=$validation_tables" >> $GITHUB_OUTPUT
+              ;;
+            "sgx_company_report")
+              validation_tables=sgx_company_report
+              echo "validation_tables=$validation_tables" >> $GITHUB_OUTPUT
+              ;;
+            "sgx_manual_input")
+              validation_tables=sgx_manual_input
+              echo "validation_tables=$validation_tables" >> $GITHUB_OUTPUT
+              ;;
             "all")
-              validation_tables=idx_combine_financials_annual,idx_combine_financials_quarterly,idx_daily_data,idx_dividend,idx_all_time_price,idx_filings,idx_stock_split
+              validation_tables=idx_combine_financials_annual,idx_combine_financials_quarterly,idx_daily_data,idx_daily_data_completeness,index_daily_data,idx_dividend,idx_all_time_price,idx_filings,idx_stock_split,idx_news,sgx_company_report,sgx_manual_input
               echo "validation_tables=$validation_tables" >> $GITHUB_OUTPUT
               ;;
           esac
@@ -92,6 +127,10 @@ jobs:
           # Scheduled trigger - determine based on schedule
           hour=$(date +%H)
           case $hour in
+            0)  # 12 AM - Daily completeness/coverage for idx_daily_data (every day)
+              validation_tables=idx_daily_data_completeness
+              echo "validation_tables=$validation_tables" >> $GITHUB_OUTPUT
+              ;;
             2)  # 2 AM - Annual (Mar, Apr, Jun on the 16th)
               if [ "$day" = "16" ] && ([ "$month" = "03" ] || [ "$month" = "04" ] || [ "$month" = "06" ]); then
                 validation_tables=idx_combine_financials_annual
@@ -126,9 +165,30 @@ jobs:
                 echo "validation_tables=$validation_tables" >> $GITHUB_OUTPUT
               fi
               ;;
-            7)  # 7 AM - Stock split (Monthly on the 1st)
+            7)  # 7 AM - Stock split (Monthly on the 1st) or SGX company report (Monthly on the 16th @ 14:00 WIB)
               if [ "$day" = "01" ]; then
                 validation_tables=idx_stock_split
+                echo "validation_tables=$validation_tables" >> $GITHUB_OUTPUT
+              elif [ "$day" = "16" ]; then
+                validation_tables=sgx_company_report
+                echo "validation_tables=$validation_tables" >> $GITHUB_OUTPUT
+              fi
+              ;;
+            8)  # 8 AM - Index daily data (Monthly on the 1st)
+              if [ "$day" = "01" ]; then
+                validation_tables=index_daily_data
+                echo "validation_tables=$validation_tables" >> $GITHUB_OUTPUT
+              fi
+              ;;
+            9)  # 9 AM - News (Monthly on the 1st)
+              if [ "$day" = "01" ]; then
+                validation_tables=idx_news
+                echo "validation_tables=$validation_tables" >> $GITHUB_OUTPUT
+              fi
+              ;;
+            10) # 10 AM - SGX manual input (Every 6 months: Jan & Jul on the 1st)
+              if [ "$day" = "01" ] && ([ "$month" = "01" ] || [ "$month" = "07" ]); then
+                validation_tables=sgx_manual_input
                 echo "validation_tables=$validation_tables" >> $GITHUB_OUTPUT
               fi
               ;;
@@ -175,6 +235,17 @@ jobs:
         echo "SUPABASE_URL=${{ secrets.SUPABASE_URL }}" >> $GITHUB_ENV
         echo "SUPABASE_KEY=${{ secrets.SUPABASE_KEY }}" >> $GITHUB_ENV
         echo "DEFAULT_EMAIL_RECIPIENTS=${{ secrets.DEFAULT_EMAIL_RECIPIENTS }}" >> $GITHUB_ENV
+        # Optional: Email delivery via AWS SES (preferred) or SMTP fallback
+        echo "AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }}" >> $GITHUB_ENV
+        echo "AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }}" >> $GITHUB_ENV
+        echo "AWS_REGION=${{ secrets.AWS_REGION }}" >> $GITHUB_ENV
+        echo "DEFAULT_FROM_EMAIL=${{ secrets.DEFAULT_FROM_EMAIL }}" >> $GITHUB_ENV
+        echo "DEFAULT_FROM_NAME=${{ secrets.DEFAULT_FROM_NAME }}" >> $GITHUB_ENV
+        echo "SMTP_SERVER=${{ secrets.SMTP_SERVER }}" >> $GITHUB_ENV
+        echo "SMTP_PORT=${{ secrets.SMTP_PORT }}" >> $GITHUB_ENV
+        echo "SMTP_USERNAME=${{ secrets.SMTP_USERNAME }}" >> $GITHUB_ENV
+        echo "SMTP_PASSWORD=${{ secrets.SMTP_PASSWORD }}" >> $GITHUB_ENV
+        echo "FROM_EMAIL=${{ secrets.FROM_EMAIL }}" >> $GITHUB_ENV
 
     - name: Run data validation for selected tables
       env:

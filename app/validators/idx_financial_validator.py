@@ -21,6 +21,8 @@ class IDXFinancialValidator(DataValidator):
             'idx_combine_financials_annual': self._validate_financial_annual,
             'idx_combine_financials_quarterly': self._validate_financial_quarterly,
             'idx_daily_data': self._validate_daily_data,
+            'idx_daily_data_completeness': self._validate_daily_data_completeness_and_coverage,
+            'index_daily_data': self._validate_index_daily_data,
             'idx_dividend': self._validate_dividend,
             'idx_all_time_price': self._validate_all_time_price,
             'idx_filings': self._validate_filings,
@@ -30,7 +32,7 @@ class IDXFinancialValidator(DataValidator):
             'sgx_manual_input': self._validate_sgx_manual_input
         }
     
-    async def validate_table(self, table_name: str, start_date: Optional[str] = None, end_date: Optional[str] = None) -> Dict[str, Any]:
+    async def validate_table(self, table_name: str, start_date: Optional[str] = None, end_date: Optional[str] = None, run_only_coverage: bool = False) -> Dict[str, Any]:
         """
         Override parent method to use IDX-specific validation rules with optional date filtering
         """
@@ -59,8 +61,11 @@ class IDXFinancialValidator(DataValidator):
             
             if not data.empty:
                 # Run table-specific validation
-                validation_func = self.idx_tables[table_name]
-                idx_results = await validation_func(data)
+                if table_name == 'idx_daily_data' and run_only_coverage:
+                    idx_results = await self._validate_daily_data_completeness_and_coverage(data)
+                else:
+                    validation_func = self.idx_tables[table_name]
+                    idx_results = await validation_func(data)
                 results["anomalies"].extend(idx_results.get("anomalies", []))
                 if table_name == 'sgx_company_report':
                     results["sgx_top_50_filter"] = {
@@ -89,7 +94,6 @@ class IDXFinancialValidator(DataValidator):
             results["errors_stored"] = len(error_anomalies)
             
             return results
-            
         except Exception as e:
             return {
                 "table_name": table_name,
@@ -97,23 +101,68 @@ class IDXFinancialValidator(DataValidator):
                 "error": str(e),
                 "validation_timestamp": datetime.now().isoformat()
             }
-    
     async def _fetch_table_data_with_filter(self, table_name: str, start_date: Optional[str] = None, end_date: Optional[str] = None) -> Tuple[pd.DataFrame, Optional[str], Optional[str]]:
         """Fetch data from Supabase table with optional date filtering and SGX top 50 filtering"""
         try:
             print(f"📊 [Validator] Fetching data from table: {table_name}")
             print(f"📅 [Validator] Date filter - Start: {start_date}, End: {end_date}")
 
+            # Alias mapping: some validator entries are logical/pseudo tables mapped to a real table
+            alias_map = {
+                'idx_daily_data_completeness': 'idx_daily_data'
+            }
+            query_table = alias_map.get(table_name, table_name)
+
             jakarta_tz = pytz.timezone('Asia/Jakarta')
             today = pd.Timestamp(datetime.now(jakarta_tz).date())
-            if table_name == 'idx_daily_data' and not start_date and not end_date:
-                start_date = (today - timedelta(days=6)).isoformat()
+            # Special default window for completeness: target only the previous business day
+            if table_name == 'idx_daily_data_completeness' and not start_date and not end_date:
+                # If today is Monday (0), go back 3 days to Friday; otherwise go back 1 day
+                days = 3 if today.weekday() == 0 else 1
+                target = (today - timedelta(days=days))
+                start_date = target.isoformat()
+                end_date = start_date
+            if query_table == 'idx_daily_data' and not start_date and not end_date:
+                start_date = (today - timedelta(days=7)).isoformat()
+                end_date = (today - timedelta(days=1)).isoformat()
+            elif query_table == 'index_daily_data' and not start_date and not end_date:
+                start_date = (today - timedelta(days=7)).isoformat()
                 end_date = today.isoformat()
-            elif table_name == 'idx_combine_financials_quarterly' and not start_date and not end_date:
+            elif query_table == 'idx_combine_financials_quarterly' and not start_date and not end_date:
                 start_date = (today - timedelta(days=365)).isoformat()
                 end_date = today.isoformat()
 
-            query = self.supabase.table(table_name).select("*")
+            query = self.supabase.table(query_table).select("*")
+
+            # Apply date filters at the database level when possible
+            # Map known tables to their date/timestamp columns
+            date_filter_column = None
+            if query_table in {
+                'idx_daily_data', 'index_daily_data', 'idx_combine_financials_quarterly',
+                'idx_combine_financials_annual', 'idx_dividend', 'idx_all_time_price',
+                'idx_stock_split'
+            }:
+                date_filter_column = 'date'
+            elif query_table == 'idx_filings':
+                date_filter_column = 'timestamp'
+
+            # If we have a target column and a start/end, apply inclusive filters
+            if date_filter_column and (start_date or end_date):
+                try:
+                    start_val = start_date
+                    end_val = end_date
+                    # For timestamp columns, widen to full-day range to be inclusive
+                    if date_filter_column == 'timestamp':
+                        if start_val:
+                            start_val = f"{start_val}T00:00:00"
+                        if end_val:
+                            end_val = f"{end_val}T23:59:59"
+                    if start_val:
+                        query = query.gte(date_filter_column, start_val)
+                    if end_val:
+                        query = query.lte(date_filter_column, end_val)
+                except Exception as err:
+                    print(f"⚠️  [Validator] Failed to apply server-side date filters for {table_name}.{date_filter_column}: {err}")
 
             # Execute base query
             try:
@@ -121,7 +170,7 @@ class IDXFinancialValidator(DataValidator):
                 raw_data = getattr(response, 'data', None)
                 # print(f"🧪 [Validator] Raw response type={type(raw_data)} length={len(raw_data) if raw_data is not None else 'None'}")
             except Exception as err:
-                print(f"❌ [Validator] Supabase query error for {table_name}: {err}")
+                print(f"❌ [Validator] Supabase query error for {query_table} (alias of {table_name}): {err}")
                 raw_data = None
             df = pd.DataFrame(raw_data) if raw_data else pd.DataFrame()
 
@@ -189,6 +238,27 @@ class IDXFinancialValidator(DataValidator):
                     df['date'] = pd.to_datetime(df['date'], errors='coerce')
                 except Exception as err:
                     print(f"⚠️  [Validator] Failed to coerce 'date' column: {err}")
+
+            # Client-side fallback filtering to ensure start/end are respected even if server-side filter didn't apply
+            try:
+                if date_filter_column and (start_date or end_date) and not df.empty:
+                    # Choose the column in dataframe to filter on
+                    col = date_filter_column if date_filter_column in df.columns else ('date' if 'date' in df.columns else None)
+                    if col:
+                        if col != 'date' and not pd.api.types.is_datetime64_any_dtype(df[col]):
+                            df[col] = pd.to_datetime(df[col], errors='coerce')
+                        start_dt = pd.to_datetime(start_date) if start_date else None
+                        end_dt = pd.to_datetime(end_date) if end_date else None
+                        if start_dt is not None:
+                            df = df[df[col] >= start_dt]
+                        if end_dt is not None:
+                            # For timestamps, include the whole end day by adding 1 day and using < next_day
+                            if date_filter_column == 'timestamp':
+                                df = df[df[col] < (end_dt + pd.Timedelta(days=1))]
+                            else:
+                                df = df[df[col] <= end_dt]
+            except Exception as err:
+                print(f"⚠️  [Validator] Failed to apply client-side date filter for {table_name}: {err}")
             
             # Return DataFrame and the applied start/end so caller can reflect actual filter used
             return df, start_date, end_date
@@ -630,6 +700,81 @@ class IDXFinancialValidator(DataValidator):
             })
         
         return {"anomalies": anomalies}
+
+    async def _validate_index_daily_data(self, data: pd.DataFrame) -> Dict[str, Any]:
+        """
+        Validate index_daily_data table
+        For each date, there must be exactly 18 index_code entries.
+        (default last month if no start/end provided).
+        """
+        anomalies: List[Dict[str, Any]] = []
+        try:
+            if data is None or data.empty:
+                return {"anomalies": anomalies}
+
+            x = data.copy()
+            # Schema checks before using columns
+            if 'date' not in x.columns:
+                anomalies.append({
+                    "severity": "error",
+                    "type": "schema_missing_column",
+                    "message": "Column 'date' is missing in index_daily_data",
+                    "details": {"required_column": "date"}
+                })
+                return {"anomalies": anomalies}
+
+            if 'index_code' not in x.columns:
+                anomalies.append({
+                    "severity": "error",
+                    "type": "schema_missing_column",
+                    "message": "Column 'index_code' is missing in index_daily_data",
+                    "details": {"required_column": "index_code"}
+                })
+                return {"anomalies": anomalies}
+
+            # Parse date to datetime
+            x['date'] = pd.to_datetime(x['date'], errors='coerce')
+            # Normalize to yyyy-mm-dd string for grouping/reporting
+            x['date'] = x['date'].dt.strftime('%Y-%m-%d')
+
+            # Count not null index_code per date
+            counts = (
+                x.groupby('date')['index_code']
+                 .count()
+                 .reset_index(name='index_count')
+            )
+            EXPECTED_COUNT = 18
+            for _, row in counts.iterrows():
+                date_val = row['date']
+                cnt = int(row['index_count'])
+                if cnt != EXPECTED_COUNT:
+                    codes = (
+                        x.loc[x['date'] == date_val, 'index_code']
+                         .dropna()
+                         .astype(str)
+                         .tolist()
+                    )
+                    anomalies.append({
+                        "severity": "error",
+                        "type": "index_daily_data_count_mismatch",
+                        "message": f"Expected {EXPECTED_COUNT} non-null index_code entries on {date_val}, found {cnt}",
+                        "date": str(date_val),
+                        "details": {
+                            "found_count": cnt,
+                            "expected_count": EXPECTED_COUNT,
+                            "present_index_codes_sample": codes[:25]
+                        }
+                    })
+        
+        except Exception as e:
+            anomalies.append({
+                "severity": "error",
+                "type": "validation_exception",
+                "message": f"index_daily_data validation failed: {str(e)}",
+                "details": {}
+            })
+
+        return {"anomalies": anomalies}
     
     async def _validate_financial_quarterly(self, data: pd.DataFrame) -> Dict[str, Any]:
         """
@@ -711,7 +856,6 @@ class IDXFinancialValidator(DataValidator):
                         "earnings": float(earn.loc[idx]) if pd.notna(earn.loc[idx]) else None,
                         "severity": "error"
                     })
-            # Tambah Metrik 1 & 2 (hanya yang akurat)
             # Only run identity/ratio checks if we have sufficient data volume
             if len(data) > 10:  # Avoid ratio checks on small datasets
                 critical_identities = await self._add_identity_anomalies(data)
@@ -734,7 +878,8 @@ class IDXFinancialValidator(DataValidator):
         """
         Validate idx_daily_data table
         Condition: close price change > 35%
-        Only validate data for the last 7 days
+        Count is evaluated on the data window returned from _fetch_table_data_with_filter
+        (default last 7 days if no start/end provided)
         """
         anomalies = []
         try:
@@ -751,12 +896,7 @@ class IDXFinancialValidator(DataValidator):
                 return {"anomalies": anomalies}
 
             data = data.copy()
-            data['date'] = pd.to_datetime(data['date'])
-
-            # Filter only last 7 days
-            today = pd.Timestamp(datetime.now(tz=None).date())
-            seven_days_ago = today - pd.Timedelta(days=7)
-            data = data[(data['date'] >= seven_days_ago)]
+            data['date'] = pd.to_datetime(data['date'], errors='coerce')
 
             for symbol in data['symbol'].unique():
                 symbol_data = data[data['symbol'] == symbol].sort_values('date')
@@ -778,12 +918,193 @@ class IDXFinancialValidator(DataValidator):
                             "message": f"Symbol {symbol} on {row['date'].strftime('%Y-%m-%d')}: Close price changed by {row['price_pct_change']:.1f}% (close: {row['close']})",
                             "severity": "warning"
                         })
+
+            # # Run additional completeness and coverage checks as a separate rule set
+            # try:
+            #     extra = await self._validate_daily_data_completeness_and_coverage(data)
+            #     anomalies.extend(extra.get("anomalies", []))
+            # except Exception as inner_err:
+            #     anomalies.append({
+            #         "type": "validation_error",
+            #         "message": f"Error running completeness/coverage checks: {str(inner_err)}",
+            #         "severity": "error"
+            #     })
         except Exception as e:
             anomalies.append({
                 "type": "validation_error",
                 "message": f"Error validating daily data: {str(e)}",
                 "severity": "error"
             })
+        return {"anomalies": anomalies}
+
+    async def _validate_daily_data_completeness_and_coverage(self, data: pd.DataFrame) -> Dict[str, Any]:
+        """
+        Additional rules for idx_daily_data:
+        1) For each date, the number of stocks (distinct symbols) must equal the number of symbols
+           found in idx_active_company_profile.
+        2) For each date, all of close, volume, and market_cap must be non-null for every symbol.
+
+        Notes:
+        - Uses the same filtered window that the caller provided, but narrows to "yesterday (weekday)" only.
+        - Symbols are compared case-sensitively as stored; we coerce to string and strip whitespace for robustness.
+        """
+        anomalies: List[Dict[str, Any]] = []
+        try:
+            if data is None or data.empty:
+                return {"anomalies": anomalies}
+
+            x = data.copy()
+            # Required columns for these checks
+            required_cols = ['date', 'symbol', 'close', 'volume', 'market_cap']
+            missing_cols = [c for c in required_cols if c not in x.columns]
+            if missing_cols:
+                anomalies.append({
+                    "severity": "error",
+                    "type": "missing_required_columns",
+                    "message": f"Missing required columns for completeness/coverage: {', '.join(missing_cols)}",
+                    "columns": missing_cols
+                })
+                return {"anomalies": anomalies}
+
+            # Normalize types
+            x['date'] = pd.to_datetime(x['date'], errors='coerce')
+            x['symbol'] = x['symbol'].astype(str).str.strip()
+
+            # Iterate over dates present in the data
+            if x.empty:
+                return {"anomalies": anomalies}
+
+            # Fetch active symbols from idx_active_company_profile
+            try:
+                resp = self.supabase.table('idx_active_company_profile').select('symbol').execute()
+                active_rows = getattr(resp, 'data', None) or []
+                active_df = pd.DataFrame(active_rows)
+                if 'symbol' not in active_df.columns or active_df.empty:
+                    active_symbols: List[str] = []
+                else:
+                    active_symbols = (
+                        active_df['symbol'].astype(str).str.strip().dropna().unique().tolist()
+                    )
+            except Exception as fetch_err:
+                # If we cannot fetch active list, record an error and skip coverage check
+                anomalies.append({
+                    "severity": "error",
+                    "type": "reference_table_fetch_error",
+                    "message": f"Failed to fetch active symbols from idx_active_company_profile: {str(fetch_err)}"
+                })
+                active_symbols = []
+
+            # Build case-insensitive active symbol set and a mapper to original casing
+            def _norm_sym(s: Any) -> str:
+                try:
+                    return str(s).strip().upper()
+                except Exception:
+                    return ""
+
+            active_original_list: List[str] = active_symbols
+            active_upper_set = { _norm_sym(s) for s in active_original_list if _norm_sym(s) }
+            active_upper_to_original: Dict[str, str] = {}
+            for s in active_original_list:
+                su = _norm_sym(s)
+                if su and su not in active_upper_to_original:
+                    active_upper_to_original[su] = s
+            active_count = len(active_upper_set)
+
+            # Prepare per-day checks
+            if x['date'].isna().all():
+                anomalies.append({
+                    "severity": "error",
+                    "type": "invalid_date_values",
+                    "message": "All 'date' values could not be parsed to datetime in idx_daily_data"
+                })
+                return {"anomalies": anomalies}
+
+            x['date_only'] = x['date'].dt.strftime('%Y-%m-%d')
+
+            for date_val, day_df in x.groupby('date_only'):
+                # 1) Coverage: compare sets of symbols (unique, case-insensitive)
+                day_original_list = (
+                    day_df['symbol'].dropna().astype(str).str.strip().tolist()
+                )
+                day_upper_set = { _norm_sym(s) for s in day_original_list if _norm_sym(s) }
+                day_upper_to_original: Dict[str, str] = {}
+                for s in day_original_list:
+                    su = _norm_sym(s)
+                    if su and su not in day_upper_to_original:
+                        day_upper_to_original[su] = s
+
+                if active_count > 0 and day_upper_set != active_upper_set:
+                    missing_upper = sorted(list(active_upper_set - day_upper_set))
+                    unexpected_upper = sorted(list(day_upper_set - active_upper_set))
+
+                    missing_symbols_original = [active_upper_to_original[u] for u in missing_upper][:50]
+                    unexpected_symbols_original = [day_upper_to_original[u] for u in unexpected_upper][:50]
+
+                    # Primary message focuses on missing symbols per request
+                    if missing_symbols_original:
+                        msg = f"On {date_val}, {', '.join(missing_symbols_original)} not present in idx_daily_data"
+                    else:
+                        msg = f"On {date_val}, unexpected symbols present: {', '.join(unexpected_symbols_original)}"
+
+                    anomalies.append({
+                        "severity": "error",
+                        "type": "daily_symbol_coverage_mismatch",
+                        "message": msg,
+                        "date": date_val,
+                        "details": {
+                            "found_count": len(day_upper_set),
+                            "expected_count": active_count,
+                            "missing_symbols_sample": missing_symbols_original,
+                            "unexpected_symbols_sample": unexpected_symbols_original
+                        }
+                    })
+
+                # 2) Non-null checks for close, volume, market_cap
+                null_close = day_df[day_df['close'].isna()]
+                null_volume = day_df[day_df['volume'].isna()]
+                null_mcap = day_df[day_df['market_cap'].isna()]
+
+                if not null_close.empty or not null_volume.empty or not null_mcap.empty:
+                    # Build a concise message listing a few affected symbols per field
+                    def _syms(df):
+                        return df['symbol'].dropna().astype(str).str.strip().unique().tolist()
+
+                    close_syms = _syms(null_close)[:10]
+                    volume_syms = _syms(null_volume)[:10]
+                    mcap_syms = _syms(null_mcap)[:10]
+
+                    parts = []
+                    if close_syms:
+                        parts.append(f"close: {', '.join(close_syms)}")
+                    if volume_syms:
+                        parts.append(f"volume: {', '.join(volume_syms)}")
+                    if mcap_syms:
+                        parts.append(f"market_cap: {', '.join(mcap_syms)}")
+                    summary = "; ".join(parts) if parts else ""
+
+                    anomalies.append({
+                        "severity": "error",
+                        "type": "daily_required_fields_null",
+                        "message": f"On {date_val}, some required fields are null — {summary}",
+                        "date": date_val,
+                        "details": {
+                            "null_close_symbols_sample": _syms(null_close)[:50],
+                            "null_volume_symbols_sample": _syms(null_volume)[:50],
+                            "null_market_cap_symbols_sample": _syms(null_mcap)[:50],
+                            "null_close_count": int(null_close.shape[0]),
+                            "null_volume_count": int(null_volume.shape[0]),
+                            "null_market_cap_count": int(null_mcap.shape[0])
+                        }
+                    })
+
+        except Exception as e:
+            anomalies.append({
+                "severity": "error",
+                "type": "validation_exception",
+                "message": f"idx_daily_data completeness/coverage validation failed: {str(e)}",
+                "details": {}
+            })
+
         return {"anomalies": anomalies}
 
     async def _validate_sgx_company_report(self, data: pd.DataFrame) -> Dict[str, Any]:

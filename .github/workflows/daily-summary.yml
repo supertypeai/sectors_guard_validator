@@ -1,9 +1,9 @@
 name: Daily Summary Report
 
 on:
-  schedule:
-    # Run daily at 8 AM UTC
-    - cron: '0 8 * * *'
+  # schedule:
+  #   # Run daily at 8 AM UTC
+  #   - cron: '0 8 * * *'
   workflow_dispatch: # Allow manual triggering
 
 env:

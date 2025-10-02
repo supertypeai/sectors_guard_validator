@@ -66,9 +66,11 @@ async def validate_all_idx_tables(send_email: bool = True):
     idx_tables = [
         'idx_combine_financials_annual',
         'idx_combine_financials_quarterly',
+        'index_daily_data',
         'idx_daily_data',
         'idx_dividend',
         'idx_all_time_price',
+        'idx_news',
         'sgx_company_report',
         'sgx_manual_input'
     ]
@@ -128,7 +130,9 @@ async def main():
             'idx_dividend',
             'idx_all_time_price',
             'sgx_company_report',
-            'sgx_manual_input'
+            'sgx_manual_input',
+            'index_daily_data',
+            'idx_news'
         ]
         for table in tables:
             print(f"  - {table}")
