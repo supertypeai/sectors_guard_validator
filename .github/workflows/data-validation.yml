@@ -26,6 +26,8 @@ on:
     - cron: '0 9 1 * *'
     # SGX manual input - Every 6 months (Jan and Jul) on the 1st at 10 AM UTC
     - cron: '0 10 1 1,7 *'
+    # Company profile - Monthly on the 29th at 11 AM UTC
+    - cron: '0 11 29 * *'
   workflow_dispatch:
     inputs:
       validation_type:
@@ -47,6 +49,7 @@ on:
           - 'news'
           - 'sgx_company_report'
           - 'sgx_manual_input'
+          - 'company_profile'
 
 env:
   PYTHON_VERSION: '3.11'
@@ -118,8 +121,12 @@ jobs:
               validation_tables=sgx_manual_input
               echo "validation_tables=$validation_tables" >> $GITHUB_OUTPUT
               ;;
+            "company_profile")
+              validation_tables=idx_company_profile
+              echo "validation_tables=$validation_tables" >> $GITHUB_OUTPUT
+              ;;
             "all")
-              validation_tables=idx_combine_financials_annual,idx_combine_financials_quarterly,idx_daily_data,idx_daily_data_completeness,index_daily_data,idx_dividend,idx_all_time_price,idx_filings,idx_stock_split,idx_news,sgx_company_report,sgx_manual_input
+              validation_tables=idx_combine_financials_annual,idx_combine_financials_quarterly,idx_daily_data,idx_daily_data_completeness,index_daily_data,idx_dividend,idx_all_time_price,idx_filings,idx_stock_split,idx_news,sgx_company_report,sgx_manual_input,idx_company_profile
               echo "validation_tables=$validation_tables" >> $GITHUB_OUTPUT
               ;;
           esac
@@ -189,6 +196,12 @@ jobs:
             10) # 10 AM - SGX manual input (Every 6 months: Jan & Jul on the 1st)
               if [ "$day" = "01" ] && ([ "$month" = "01" ] || [ "$month" = "07" ]); then
                 validation_tables=sgx_manual_input
+                echo "validation_tables=$validation_tables" >> $GITHUB_OUTPUT
+              fi
+              ;;
+            11) # 11 AM - Company profile (Monthly on the 29th)
+              if [ "$day" = "29" ]; then
+                validation_tables=idx_company_profile
                 echo "validation_tables=$validation_tables" >> $GITHUB_OUTPUT
               fi
               ;;

@@ -272,6 +272,22 @@ class IDXFinancialValidator(DataValidator):
         """Return tolerance per-row combining relative & absolute materiality."""
         return np.maximum(base.abs() * rel, abs_tol)
 
+    def _to_json_serializable(self, obj):
+        """Convert numpy/pandas types to JSON serializable Python types."""
+        if pd.isna(obj):
+            return None
+        elif isinstance(obj, (np.integer, np.int64, np.int32)):
+            return int(obj)
+        elif isinstance(obj, (np.floating, np.float64, np.float32)):
+            return float(obj)
+        elif isinstance(obj, np.bool_):
+            return bool(obj)
+        elif isinstance(obj, (pd.Timestamp, datetime)):
+            return obj.isoformat() if hasattr(obj, 'isoformat') else str(obj)
+        elif isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return obj
+
     async def _add_identity_anomalies(self, df: pd.DataFrame) -> List[Dict[str, Any]]:
         """Check core accounting identities (Metrik 1)."""
         anomalies: List[Dict[str, Any]] = []
@@ -1560,11 +1576,13 @@ class IDXFinancialValidator(DataValidator):
     async def _validate_filings(self, data: pd.DataFrame) -> Dict[str, Any]:
         """
         Validate idx_filings table
-        Condition: Compare filing price with daily price at the timestamp from idx_daily_data
+        Conditions:
+        1. Compare filing price with daily price at the timestamp from idx_daily_data
+        2. Detect duplicate transactions: same amount_transaction AND (date difference < 3 days OR same holder_name)
         """
         anomalies = []
         try:
-            # Ensure required columns
+            # Ensure required columns for price validation
             required_cols = ['timestamp', 'tickers', 'price']
             missing_cols = [col for col in required_cols if col not in data.columns]
             if missing_cols:
@@ -1581,7 +1599,7 @@ class IDXFinancialValidator(DataValidator):
             data['timestamp'] = pd.to_datetime(data['timestamp'])
             data['date'] = data['timestamp'].dt.date
 
-            # Group by ticker for consistency
+            # Rule 1: Compare filing price with daily price
             for idx, filing in data.iterrows():
                 try:
                     # Validate price
@@ -1628,6 +1646,74 @@ class IDXFinancialValidator(DataValidator):
                             })
                 except (ValueError, TypeError):
                     continue
+
+            # Rule 2: Detect duplicate transactions
+            # Check if required columns exist
+            duplicate_check_cols = ['amount_transaction', 'timestamp', 'holder_name', 'symbol']
+            if all(col in data.columns for col in duplicate_check_cols):
+                # Filter out rows with null amount_transaction
+                valid_data = data[data['amount_transaction'].notna()].copy()
+                
+                if len(valid_data) > 1:
+                    # Track which transaction IDs we've already reported as duplicates
+                    reported_groups = set()
+                    
+                    # Compare each transaction with others
+                    for i in range(len(valid_data)):
+                        row_a = valid_data.iloc[i]
+                        id_a = self._to_json_serializable(row_a.get('id', i))
+                        
+                        # Skip if this transaction is already in a reported group
+                        if id_a in reported_groups:
+                            continue
+                        
+                        for j in range(i + 1, len(valid_data)):
+                            row_b = valid_data.iloc[j]
+                            id_b = self._to_json_serializable(row_b.get('id', j))
+                            
+                            # Skip if already reported
+                            if id_b in reported_groups:
+                                continue
+                            
+                            # Must be same symbol
+                            symbol_a = str(row_a.get('symbol', '')).strip().upper()
+                            symbol_b = str(row_b.get('symbol', '')).strip().upper()
+                            if symbol_a != symbol_b or not symbol_a:
+                                continue
+                            
+                            # Check if amount_transaction is the same
+                            if row_a['amount_transaction'] == row_b['amount_transaction']:
+                                # Calculate date difference in days
+                                date_diff = abs((row_a['timestamp'] - row_b['timestamp']).days)
+                                same_holder = str(row_a.get('holder_name', '')).strip().lower() == str(row_b.get('holder_name', '')).strip().lower()
+                                
+                                # Check if date difference < 3 days OR same holder (but only if date diff <= 3)
+                                # This prevents false positives from transactions many months/years apart
+                                if date_diff < 3 or (same_holder and date_diff <= 3):
+                                    # Mark both as reported
+                                    reported_groups.add(id_a)
+                                    reported_groups.add(id_b)
+                                    
+                                    # Convert all values to JSON serializable types
+                                    anomalies.append({
+                                        "type": "duplicate_transaction",
+                                        "transaction_1_id": id_a,
+                                        "transaction_2_id": id_b,
+                                        "amount_transaction": self._to_json_serializable(row_a['amount_transaction']),
+                                        "holder_1": str(row_a.get('holder_name', 'N/A')),
+                                        "holder_2": str(row_b.get('holder_name', 'N/A')),
+                                        "date_1": row_a['timestamp'].strftime('%Y-%m-%d %H:%M:%S') if hasattr(row_a['timestamp'], 'strftime') else str(row_a['timestamp']),
+                                        "date_2": row_b['timestamp'].strftime('%Y-%m-%d %H:%M:%S') if hasattr(row_b['timestamp'], 'strftime') else str(row_b['timestamp']),
+                                        "date_difference_days": int(date_diff),
+                                        "same_holder": bool(same_holder),
+                                        "symbol": symbol_a,
+                                        "message": f"Potential duplicate transaction detected: Same amount ({int(row_a['amount_transaction']):,}) shares for {symbol_a}, {date_diff} day(s) apart" + 
+                                                  (f", same holder ({row_a.get('holder_name', 'N/A')})" if same_holder else ""),
+                                        "severity": "error"
+                                    })
+                                    # Only report first match for transaction_a, then move to next transaction
+                                    break
+
         except Exception as e:
             anomalies.append({
                 "type": "validation_error",
