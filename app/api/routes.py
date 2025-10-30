@@ -27,7 +27,7 @@ async def get_tables():
     try:
         supabase = get_supabase_client()
         # IDX financial tables for validation
-        idx_tables = [
+        all_tables = [
             {
                 "name": "idx_combine_financials_annual", 
                 "description": "Annual financial data - Revenue, earnings, assets validation",
@@ -109,7 +109,7 @@ async def get_tables():
         ]
         
         # Get last validation times from database
-        for table in idx_tables:
+        for table in all_tables:
             try:
                 response = supabase.table("validation_results").select("validation_timestamp").eq("table_name", table["name"]).order("validation_timestamp", desc=True).limit(1).execute()
                 if response.data:
@@ -119,7 +119,7 @@ async def get_tables():
             except Exception:
                 table["last_validated"] = None
         
-        return {"tables": idx_tables}
+        return {"tables": all_tables}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -290,19 +290,100 @@ async def get_validation_results(
             }
         }
 
+@dashboard_router.get("/results/by-table/{table_name}")
+async def get_validation_results_by_table(
+    table_name: str,
+    limit: int = Query(5, ge=1, le=100, description="Number of recent results to return")
+):
+    """Get recent validation results for a specific table"""
+    try:
+        print(f"📊 [API] Getting validation results by table - table: {table_name}, limit: {limit}")
+        
+        # Try to get from database first
+        supabase = get_supabase_client()
+        response = supabase.table("validation_results")\
+            .select("*")\
+            .eq("table_name", table_name)\
+            .order("validation_timestamp", desc=True)\
+            .limit(limit)\
+            .execute()
+        
+        print(f"🔍 [API] Database query returned {len(response.data) if response.data else 0} results for {table_name}")
+        
+        if response.data:
+            return {
+                "status": "success",
+                "data": {
+                    "table_name": table_name,
+                    "results": response.data,
+                    "count": len(response.data)
+                },
+                "source": "database"
+            }
+        else:
+            return {
+                "status": "success",
+                "data": {
+                    "table_name": table_name,
+                    "results": [],
+                    "count": 0
+                },
+                "source": "database",
+                "message": f"No validation results found for {table_name}"
+            }
+            
+    except Exception as db_error:
+        print(f"⚠️  Database query failed: {db_error}")
+        
+        # Fallback to local storage
+        try:
+            print("📁 [API] Falling back to local storage")
+            from app.validators.data_validator import DataValidator
+            validator = DataValidator()
+            local_results = validator.get_stored_validation_results()
+            
+            # Filter by table_name
+            filtered_results = [r for r in local_results if r.get("table_name") == table_name]
+            filtered_results = filtered_results[:limit]
+            
+            print(f"📁 [API] Local storage returned {len(filtered_results)} results for {table_name}")
+            
+            return {
+                "status": "success",
+                "data": {
+                    "table_name": table_name,
+                    "results": filtered_results,
+                    "count": len(filtered_results)
+                },
+                "source": "local_storage",
+                "message": "Using local storage - database unavailable"
+            }
+            
+        except Exception as local_error:
+            print(f"⚠️  Local storage also failed: {local_error}")
+            return {
+                "status": "error",
+                "message": "Both database and local storage unavailable",
+                "data": {
+                    "table_name": table_name,
+                    "results": [],
+                    "count": 0
+                }
+            }
+
 @dashboard_router.get("/stats")
 async def get_dashboard_stats():
     """Get dashboard statistics"""
     try:
         supabase = get_supabase_client()
         
-        # Get total IDX tables count
-        idx_tables = [
+        # Get total tables count
+        all_tables = [
             "idx_combine_financials_annual", "idx_combine_financials_quarterly", 
             "idx_daily_data", "idx_daily_data_completeness", "idx_dividend", "idx_all_time_price", 
-            "idx_filings", "idx_stock_split"
+            "idx_filings", "idx_stock_split", "idx_news", "sgx_company_report", "sgx_manual_input", "idx_company_profile"
         ]
-        total_tables = len(idx_tables)
+        total_tables = len(all_tables)
         
         # Get today's validations
         from datetime import datetime, timedelta
@@ -603,7 +684,7 @@ async def get_table_status():
         from datetime import datetime, timedelta
         
         # Get latest validation results for each IDX table
-        idx_tables = [
+        all_tables = [
             "idx_combine_financials_annual", "idx_combine_financials_quarterly", 
             "idx_daily_data", "idx_daily_data_completeness", "idx_dividend", "idx_all_time_price", 
             "idx_filings", "idx_stock_split"
@@ -613,7 +694,7 @@ async def get_table_status():
         warning = 0
         error = 0
         
-        for table in idx_tables:
+        for table in all_tables:
             # Get most recent validation result for this table
             response = supabase.table("validation_results").select("status").eq("table_name", table).order("validation_timestamp", desc=True).limit(1).execute()
             
