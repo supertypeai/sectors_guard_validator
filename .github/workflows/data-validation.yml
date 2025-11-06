@@ -228,134 +228,177 @@ jobs:
       with:
         python-version: ${{ env.PYTHON_VERSION }}
 
-    - name: Cache Python dependencies
-      uses: actions/cache@v3
-      with:
-        path: ~/.cache/pip
-        key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
-        restore-keys: |
-          ${{ runner.os }}-pip-
-
-    - name: Install Python dependencies
+    - name: Install requests library
       run: |
         python -m pip install --upgrade pip
-        pip install -r requirements.txt
+        pip install requests
 
-    - name: Set up environment variables
-      run: |
-        echo "JWT_SECRET=${{ secrets.JWT_SECRET }}" >> $GITHUB_ENV
-        echo "PASSWORD=${{ secrets.PASSWORD }}" >> $GITHUB_ENV
-        echo "SUPABASE_URL=${{ secrets.SUPABASE_URL }}" >> $GITHUB_ENV
-        echo "SUPABASE_KEY=${{ secrets.SUPABASE_KEY }}" >> $GITHUB_ENV
-        echo "DEFAULT_EMAIL_RECIPIENTS=${{ secrets.DEFAULT_EMAIL_RECIPIENTS }}" >> $GITHUB_ENV
-        # Optional: Email delivery via AWS SES (preferred) or SMTP fallback
-        echo "AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }}" >> $GITHUB_ENV
-        echo "AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }}" >> $GITHUB_ENV
-        echo "AWS_REGION=${{ secrets.AWS_REGION }}" >> $GITHUB_ENV
-        echo "DEFAULT_FROM_EMAIL=${{ secrets.DEFAULT_FROM_EMAIL }}" >> $GITHUB_ENV
-        echo "DEFAULT_FROM_NAME=${{ secrets.DEFAULT_FROM_NAME }}" >> $GITHUB_ENV
-        echo "SMTP_SERVER=${{ secrets.SMTP_SERVER }}" >> $GITHUB_ENV
-        echo "SMTP_PORT=${{ secrets.SMTP_PORT }}" >> $GITHUB_ENV
-        echo "SMTP_USERNAME=${{ secrets.SMTP_USERNAME }}" >> $GITHUB_ENV
-        echo "SMTP_PASSWORD=${{ secrets.SMTP_PASSWORD }}" >> $GITHUB_ENV
-        echo "FROM_EMAIL=${{ secrets.FROM_EMAIL }}" >> $GITHUB_ENV
-
-    - name: Run data validation for selected tables
+    - name: Run data validation via API
       env:
         TABLES_TO_VALIDATE: ${{ needs.determine-validation-type.outputs.validation_tables }}
+        API_BASE_URL: https://sectors-guard-validator.fly.dev
+        BACKEND_API_TOKEN: ${{ secrets.BACKEND_API_TOKEN }}
       run: |
         python -c "
-        import asyncio
+        import requests
         import sys
         import os
-        sys.path.append('.')
+        import json
+        from datetime import datetime
         
-        from app.validators.idx_financial_validator import IDXFinancialValidator
-        from app.notifications.email_helper import EmailHelper
-        from app.database.connection import get_supabase_client
+        # Get configuration from environment
+        tables_env = os.getenv('TABLES_TO_VALIDATE', '')
+        api_base_url = os.getenv('API_BASE_URL', 'https://sectors-guard-validator.fly.dev')
+        api_token = os.getenv('BACKEND_API_TOKEN')
         
-        async def run_validations():
+        if not api_token:
+            print('::error::BACKEND_API_TOKEN not configured')
+            sys.exit(1)
+        
+        if not tables_env or tables_env == 'none':
+            print('No tables to validate.')
+            sys.exit(0)
+        
+        tables_to_validate = [t.strip() for t in tables_env.split(',') if t.strip()]
+        print(f'📋 Tables to validate: {tables_to_validate}')
+        print(f'🌐 API URL: {api_base_url}')
+        
+        # Prepare request headers
+        headers = {
+            'Authorization': f'Bearer {api_token}',
+            'Content-Type': 'application/json'
+        }
+        
+        total_anomalies = 0
+        results_summary = []
+        
+        # Validate each table via API
+        for table_name in tables_to_validate:
+            print(f'\\n🔍 Validating table: {table_name}')
+            
             try:
-                # Get tables to validate from environment
-                tables_env = os.getenv('TABLES_TO_VALIDATE', '')
-                if not tables_env or tables_env == 'none':
-                    print('No tables to validate.')
-                    return
+                # Call API endpoint
+                response = requests.post(
+                    f'{api_base_url}/api/validation/run/{table_name}',
+                    headers=headers,
+                    timeout=600  # 10 minutes timeout for large datasets
+                )
                 
-                tables_to_validate = [t.strip() for t in tables_env.split(',') if t.strip()]
-                print(f'Tables to validate: {tables_to_validate}')
-                
-                validator = IDXFinancialValidator()
-                email_helper = EmailHelper()
-                
-                total_anomalies = 0
-                results_summary = []
-                
-                for table_name in tables_to_validate:
-                    print(f'\\n🔍 Validating table: {table_name}')
+                if response.status_code == 200:
+                    result = response.json()
+                    anomalies_count = result.get('anomalies_count', 0)
+                    total_anomalies += anomalies_count
                     
-                    try:
-                        result = await validator.validate_table(table_name)
-                        anomalies_count = result.get('anomalies_count', 0)
-                        total_anomalies += anomalies_count
+                    results_summary.append({
+                        'table': table_name,
+                        'status': result.get('status', 'success'),
+                        'anomalies': anomalies_count,
+                        'validation_timestamp': result.get('validation_timestamp'),
+                        'email_sent': result.get('email_sent', False)
+                    })
+                    
+                    if anomalies_count > 0:
+                        print(f'⚠️  {table_name}: {anomalies_count} anomalies detected')
+                        if result.get('email_sent'):
+                            print(f'📧 Email notification sent for {table_name}')
+                    else:
+                        print(f'✅ {table_name}: No anomalies found')
                         
-                        results_summary.append({
-                            'table': table_name,
-                            'status': result.get('status', 'unknown'),
-                            'anomalies': anomalies_count,
-                            'validation_timestamp': result.get('validation_timestamp')
-                        })
-                        
-                        # Send email if anomalies detected
-                        if anomalies_count > 0:
-                            await email_helper.notify_validation_complete(table_name, result, send_email=True)
-                            print(f'📧 Email notification sent for {table_name}: {anomalies_count} anomalies')
-                        else:
-                            print(f'✅ No anomalies found in {table_name}')
-                            
-                    except Exception as e:
-                        print(f'❌ Error validating {table_name}: {str(e)}')
-                        results_summary.append({
-                            'table': table_name,
-                            'status': 'error',
-                            'anomalies': 0,
-                            'error': str(e)
-                        })
-                
-                # Print summary
-                print(f'\\n=== 📊 Validation Summary ===')
-                print(f'Tables validated: {len(tables_to_validate)}')
-                print(f'Total anomalies detected: {total_anomalies}')
-                
-                for result in results_summary:
-                    status_emoji = '✅' if result['status'] == 'success' else '⚠️' if result['status'] == 'warning' else '❌'
-                    print(f'{status_emoji} {result[\"table\"]}: {result[\"status\"]} ({result[\"anomalies\"]} anomalies)')
-                
-                # Set GitHub Actions output for notifications
-                if total_anomalies > 0:
-                    print(f'::warning::Found {total_anomalies} anomalies across {len([r for r in results_summary if r[\"anomalies\"] > 0])} tables')
+                elif response.status_code == 401:
+                    print(f'::error::Authentication failed for {table_name}: Invalid BACKEND_API_TOKEN')
+                    results_summary.append({
+                        'table': table_name,
+                        'status': 'error',
+                        'anomalies': 0,
+                        'error': 'Authentication failed'
+                    })
+                    sys.exit(1)
+                    
+                elif response.status_code == 403:
+                    print(f'::error::Authorization failed for {table_name}: Access denied')
+                    results_summary.append({
+                        'table': table_name,
+                        'status': 'error',
+                        'anomalies': 0,
+                        'error': 'Authorization failed'
+                    })
+                    sys.exit(1)
+                    
                 else:
-                    print(f'::notice::All validations completed successfully with no anomalies detected')
+                    error_msg = response.text
+                    print(f'❌ Error validating {table_name}: HTTP {response.status_code} - {error_msg}')
+                    results_summary.append({
+                        'table': table_name,
+                        'status': 'error',
+                        'anomalies': 0,
+                        'error': f'HTTP {response.status_code}: {error_msg}'
+                    })
+                    
+            except requests.exceptions.Timeout:
+                print(f'❌ Timeout validating {table_name}: Request exceeded 10 minutes')
+                results_summary.append({
+                    'table': table_name,
+                    'status': 'error',
+                    'anomalies': 0,
+                    'error': 'Request timeout'
+                })
                 
-                # Save results for artifact
-                import json
-                with open('validation_results.json', 'w') as f:
-                    json.dump({
-                        'summary': {
-                            'total_tables': len(tables_to_validate),
-                            'total_anomalies': total_anomalies,
-                            'tables_with_anomalies': len([r for r in results_summary if r['anomalies'] > 0])
-                        },
-                        'results': results_summary,
-                        'timestamp': result.get('validation_timestamp') if results_summary else None
-                    }, f, indent=2)
+            except requests.exceptions.RequestException as e:
+                print(f'❌ Network error validating {table_name}: {str(e)}')
+                results_summary.append({
+                    'table': table_name,
+                    'status': 'error',
+                    'anomalies': 0,
+                    'error': f'Network error: {str(e)}'
+                })
                 
             except Exception as e:
-                print(f'::error::Critical error during validation: {str(e)}')
-                sys.exit(1)
+                print(f'❌ Unexpected error validating {table_name}: {str(e)}')
+                results_summary.append({
+                    'table': table_name,
+                    'status': 'error',
+                    'anomalies': 0,
+                    'error': str(e)
+                })
         
-        asyncio.run(run_validations())
+        # Print summary
+        print(f'\\n=== 📊 Validation Summary ===')
+        print(f'Tables validated: {len(tables_to_validate)}')
+        print(f'Total anomalies detected: {total_anomalies}')
+        print(f'Tables with errors: {len([r for r in results_summary if r[\"status\"] == \"error\"])}')
+        
+        for result in results_summary:
+            status_emoji = '✅' if result['status'] == 'success' and result['anomalies'] == 0 else '⚠️' if result['status'] == 'success' else '❌'
+            anomaly_text = f\"({result['anomalies']} anomalies)\" if result['status'] == 'success' else f\"({result.get('error', 'unknown error')})\"
+            print(f\"{status_emoji} {result['table']}: {result['status']} {anomaly_text}\")
+        
+        # Set GitHub Actions output for notifications
+        if total_anomalies > 0:
+            print(f'::warning::Found {total_anomalies} anomalies across {len([r for r in results_summary if r.get(\"anomalies\", 0) > 0])} tables')
+        else:
+            print(f'::notice::All validations completed successfully with no anomalies detected')
+        
+        # Check if any validation had errors
+        error_count = len([r for r in results_summary if r['status'] == 'error'])
+        if error_count > 0:
+            print(f'::error::{error_count} table(s) failed validation')
+            sys.exit(1)
+        
+        # Save results
+        with open('validation_results.json', 'w') as f:
+            json.dump({
+                'summary': {
+                    'total_tables': len(tables_to_validate),
+                    'total_anomalies': total_anomalies,
+                    'tables_with_anomalies': len([r for r in results_summary if r.get('anomalies', 0) > 0]),
+                    'tables_with_errors': error_count
+                },
+                'results': results_summary,
+                'timestamp': datetime.utcnow().isoformat()
+            }, f, indent=2)
+        print('\\n💾 Results saved to validation_results.json')
         "
+
 
     - name: Create validation report
       if: always()
