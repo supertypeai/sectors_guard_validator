@@ -21,6 +21,8 @@ class IDXFinancialValidator(DataValidator):
         self.idx_tables = {
             'idx_combine_financials_annual': self._validate_financial_annual,
             'idx_combine_financials_quarterly': self._validate_financial_quarterly,
+            'idx_financial_sheets_annual': self._validate_financial_sheets_annual,
+            'idx_financial_sheets_quarterly': self._validate_financial_sheets_quarterly,
             'idx_daily_data': self._validate_daily_data,
             'idx_daily_data_completeness': self._validate_daily_data_completeness_and_coverage,
             'index_daily_data': self._validate_index_daily_data,
@@ -133,6 +135,10 @@ class IDXFinancialValidator(DataValidator):
             elif query_table == 'idx_combine_financials_quarterly' and not start_date and not end_date:
                 start_date = (today - timedelta(days=365)).isoformat()
                 end_date = today.isoformat()
+            elif query_table in ['idx_financial_sheets_annual', 'idx_financial_sheets_quarterly'] and not start_date and not end_date:
+                # Default to last 2 years for financial sheets
+                start_date = (today - timedelta(days=730)).isoformat()
+                end_date = today.isoformat()
 
             query = self.supabase.table(query_table).select("*")
 
@@ -142,7 +148,7 @@ class IDXFinancialValidator(DataValidator):
             if query_table in {
                 'idx_daily_data', 'index_daily_data', 'idx_combine_financials_quarterly',
                 'idx_combine_financials_annual', 'idx_dividend', 'idx_all_time_price',
-                'idx_stock_split'
+                'idx_stock_split', 'idx_financial_sheets_annual', 'idx_financial_sheets_quarterly'
             }:
                 date_filter_column = 'date'
             elif query_table == 'idx_filings':
@@ -890,6 +896,269 @@ class IDXFinancialValidator(DataValidator):
                 "message": f"Error validating quarterly financial data: {str(e)}",
                 "severity": "error"
             })
+        return {"anomalies": anomalies}
+    
+    async def _validate_financial_sheets_annual(self, data: pd.DataFrame) -> Dict[str, Any]:
+        """
+        Validate idx_financial_sheets_annual table
+        
+        Rules:
+        1. Net Income Flow: net_income = pretax_income - income_taxes + minorities (commented out)
+        2. Minority Check: If minorities = 0, then net_income must equal profit_attributable_to_parent
+        3. Revenue Positivity: total_revenue must always be positive
+        """
+        anomalies = []
+        
+        try:
+            # Ensure we have required columns for income statement
+            required_cols = ['date', 'symbol']
+            missing_cols = [col for col in required_cols if col not in data.columns]
+            
+            if missing_cols:
+                anomalies.append({
+                    "type": "missing_required_columns",
+                    "columns": missing_cols,
+                    "message": f"Missing required columns: {', '.join(missing_cols)}",
+                    "severity": "error"
+                })
+                return {"anomalies": anomalies}
+            
+            data = data.copy()
+            data['date'] = pd.to_datetime(data['date'])
+            
+            # Process each row
+            for idx in data.index:
+                row = data.loc[idx]
+                symbol = row.get('symbol')
+                date_val = row.get('date')
+                date_str = date_val.strftime('%Y-%m-%d') if isinstance(date_val, (pd.Timestamp, datetime)) else str(date_val)
+                
+                # Check if income_stmt_metrics exists
+                income_metrics = row.get('income_stmt_metrics')
+                if pd.isna(income_metrics) or income_metrics is None:
+                    continue
+                
+                # Handle JSON string or dict
+                if isinstance(income_metrics, str):
+                    try:
+                        import json
+                        income_metrics = json.loads(income_metrics)
+                    except:
+                        continue
+                
+                if not isinstance(income_metrics, dict):
+                    continue
+                
+                # Extract values
+                net_income = income_metrics.get('net_income')
+                pretax_income = income_metrics.get('pretax_income')
+                income_taxes = income_metrics.get('income_taxes')
+                minorities = income_metrics.get('minorities', 0)
+                profit_attributable_to_parent = income_metrics.get('profit_attributable_to_parent')
+                total_revenue = income_metrics.get('total_revenue')
+                
+                # Rule 1: Net Income 
+                # net_income = pretax_income - income_taxes + minorities
+                # if all(pd.notna(v) and v is not None for v in [net_income, pretax_income, income_taxes]):
+                #     minorities_val = minorities if pd.notna(minorities) and minorities is not None else 0
+                #     expected_net_income = pretax_income - income_taxes + minorities_val
+                    
+                #     # Use tolerance: 0.1% relative or 1 billion absolute
+                #     tolerance = max(abs(expected_net_income) * 0.001, 1e9)
+                #     difference = abs(net_income - expected_net_income)
+                    
+                #     if difference > tolerance:
+                #         anomalies.append({
+                #             "type": "accounting_identity_violation",
+                #             "rule": "net_income_flow",
+                #             "symbol": symbol,
+                #             "date": date_str,
+                #             "message": f"Net income flow violated for {symbol} on {date_str}: net_income should equal pretax_income - income_taxes + minorities",
+                #             "net_income": float(net_income),
+                #             "pretax_income": float(pretax_income),
+                #             "income_taxes": float(income_taxes),
+                #             "minorities": float(minorities_val),
+                #             "expected_net_income": float(expected_net_income),
+                #             "difference": float(difference),
+                #             "difference_pct": float((difference / abs(expected_net_income) * 100) if expected_net_income != 0 else 0),
+                #             "severity": "error"
+                #         })
+                
+                # Rule 2: Minority Check
+                # If minorities = 0, then net_income must equal profit_attributable_to_parent
+                minorities_val = minorities if pd.notna(minorities) and minorities is not None else 0
+                if minorities_val == 0 and all(pd.notna(v) and v is not None for v in [net_income, profit_attributable_to_parent]):
+                    tolerance = max(abs(net_income) * 0.1, 1e9)
+                    difference = abs(net_income - profit_attributable_to_parent)
+                    
+                    if difference > tolerance:
+                        anomalies.append({
+                            "type": "accounting_identity_violation",
+                            "rule": "minority_check",
+                            "symbol": symbol,
+                            "date": date_str,
+                            "message": f"Minority check violated for {symbol} on {date_str}: When minorities=0, net_income must equal profit_attributable_to_parent",
+                            "minorities": float(minorities_val),
+                            "net_income": float(net_income),
+                            "profit_attributable_to_parent": float(profit_attributable_to_parent),
+                            "difference": float(difference),
+                            "difference_pct": float((difference / abs(net_income) * 100) if net_income != 0 else 0),
+                            "severity": "error"
+                        })
+                
+                # Rule 3: Revenue Positivity
+                # total_revenue must always be positive
+                if pd.notna(total_revenue) and total_revenue is not None:
+                    if total_revenue <= 0:
+                        anomalies.append({
+                            "type": "business_rule_violation",
+                            "rule": "revenue_positivity",
+                            "symbol": symbol,
+                            "date": date_str,
+                            "message": f"Revenue must be positive for {symbol} on {date_str}: Operating companies must have revenue",
+                            "total_revenue": float(total_revenue),
+                            "severity": "error"
+                        })
+        
+        except Exception as e:
+            anomalies.append({
+                "type": "validation_error",
+                "message": f"Error validating annual financial sheets data: {str(e)}",
+                "severity": "error"
+            })
+        
+        return {"anomalies": anomalies}
+    
+    async def _validate_financial_sheets_quarterly(self, data: pd.DataFrame) -> Dict[str, Any]:
+        """
+        Validate idx_financial_sheets_quarterly table
+        Implements accounting golden rules for quarterly financial sheets data
+        
+        Rules (same as annual):
+        1. Net Income : net_income = pretax_income - income_taxes + minorities (commented out)
+        2. Minority Check: If minorities = 0, then net_income must equal profit_attributable_to_parent
+        3. Revenue Positivity: total_revenue must always be positive (companies must have revenue to operate)
+        """
+        anomalies = []
+        
+        try:
+            # Ensure we have required columns for income statement
+            required_cols = ['date', 'symbol']
+            missing_cols = [col for col in required_cols if col not in data.columns]
+            
+            if missing_cols:
+                anomalies.append({
+                    "type": "missing_required_columns",
+                    "columns": missing_cols,
+                    "message": f"Missing required columns: {', '.join(missing_cols)}",
+                    "severity": "error"
+                })
+                return {"anomalies": anomalies}
+            
+            data = data.copy()
+            data['date'] = pd.to_datetime(data['date'])
+            
+            # Process each row
+            for idx in data.index:
+                row = data.loc[idx]
+                symbol = row.get('symbol')
+                date_val = row.get('date')
+                date_str = date_val.strftime('%Y-%m-%d') if isinstance(date_val, (pd.Timestamp, datetime)) else str(date_val)
+                
+                # Check if income_stmt_metrics exists
+                income_metrics = row.get('income_stmt_metrics')
+                if pd.isna(income_metrics) or income_metrics is None:
+                    continue
+                
+                # Handle JSON string or dict
+                if isinstance(income_metrics, str):
+                    try:
+                        import json
+                        income_metrics = json.loads(income_metrics)
+                    except:
+                        continue
+                
+                if not isinstance(income_metrics, dict):
+                    continue
+                
+                # Extract values
+                net_income = income_metrics.get('net_income')
+                pretax_income = income_metrics.get('pretax_income')
+                income_taxes = income_metrics.get('income_taxes')
+                minorities = income_metrics.get('minorities', 0)
+                profit_attributable_to_parent = income_metrics.get('profit_attributable_to_parent')
+                total_revenue = income_metrics.get('total_revenue')
+                
+                # Rule 1: Net Income 
+                # net_income = pretax_income - income_taxes + minorities
+                # if all(pd.notna(v) and v is not None for v in [net_income, pretax_income, income_taxes]):
+                #     minorities_val = minorities if pd.notna(minorities) and minorities is not None else 0
+                #     expected_net_income = pretax_income - income_taxes + minorities_val
+                    
+                #     # Use tolerance: 0.1% relative or 1 billion absolute
+                #     tolerance = max(abs(expected_net_income) * 0.001, 1e9)
+                #     difference = abs(net_income - expected_net_income)
+                    
+                #     if difference > tolerance:
+                #         anomalies.append({
+                #             "type": "accounting_identity_violation",
+                #             "rule": "net_income_flow",
+                #             "symbol": symbol,
+                #             "date": date_str,
+                #             "message": f"Net income flow violated for {symbol} on {date_str}: net_income should equal pretax_income - income_taxes + minorities",
+                #             "net_income": float(net_income),
+                #             "pretax_income": float(pretax_income),
+                #             "income_taxes": float(income_taxes),
+                #             "minorities": float(minorities_val),
+                #             "expected_net_income": float(expected_net_income),
+                #             "difference": float(difference),
+                #             "difference_pct": float((difference / abs(expected_net_income) * 100) if expected_net_income != 0 else 0),
+                #             "severity": "error"
+                #         })
+                
+                # Rule 2: Minority Check
+                # If minorities = 0, then net_income must equal profit_attributable_to_parent
+                minorities_val = minorities if pd.notna(minorities) and minorities is not None else 0
+                if minorities_val == 0 and all(pd.notna(v) and v is not None for v in [net_income, profit_attributable_to_parent]):
+                    tolerance = max(abs(net_income) * 0.1, 1e9)
+                    difference = abs(net_income - profit_attributable_to_parent)
+                    
+                    if difference > tolerance:
+                        anomalies.append({
+                            "type": "accounting_identity_violation",
+                            "rule": "minority_check",
+                            "symbol": symbol,
+                            "date": date_str,
+                            "message": f"Minority check violated for {symbol} on {date_str}: When minorities=0, net_income must equal profit_attributable_to_parent",
+                            "minorities": float(minorities_val),
+                            "net_income": float(net_income),
+                            "profit_attributable_to_parent": float(profit_attributable_to_parent),
+                            "difference": float(difference),
+                            "difference_pct": float((difference / abs(net_income) * 100) if net_income != 0 else 0),
+                            "severity": "error"
+                        })
+                
+                # Rule 3: Revenue Positivity
+                # total_revenue must always be positive
+                if pd.notna(total_revenue) and total_revenue is not None:
+                    if total_revenue <= 0:
+                        anomalies.append({
+                            "type": "business_rule_violation",
+                            "rule": "revenue_positivity",
+                            "symbol": symbol,
+                            "date": date_str,
+                            "message": f"Revenue must be positive for {symbol} on {date_str}: Operating companies must have revenue",
+                            "total_revenue": float(total_revenue),
+                            "severity": "error"
+                        })
+        
+        except Exception as e:
+            anomalies.append({
+                "type": "validation_error",
+                "message": f"Error validating quarterly financial sheets data: {str(e)}",
+                "severity": "error"
+            })
+        
         return {"anomalies": anomalies}
     
     async def _validate_daily_data(self, data: pd.DataFrame) -> Dict[str, Any]:

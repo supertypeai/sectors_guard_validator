@@ -41,6 +41,18 @@ async def get_tables():
                 "rules": "Change >50% vs average change per quarter"
             },
             {
+                "name": "idx_financial_sheets_annual",
+                "description": "Annual financial sheets - Accounting identity validation",
+                "validation_type": "Financial Sheets (Annual)",
+                "rules": "Golden rules: net_income = pretax_income - taxes + minorities; minorities=0 → net_income=profit_parent; revenue>0"
+            },
+            {
+                "name": "idx_financial_sheets_quarterly",
+                "description": "Quarterly financial sheets - Accounting identity validation",
+                "validation_type": "Financial Sheets (Quarterly)",
+                "rules": "Golden rules: net_income = pretax_income - taxes + minorities; minorities=0 → net_income=profit_parent; revenue>0"
+            },
+            {
                 "name": "index_daily_data",
                 "description": "Daily index level data - Expect complete coverage per day",
                 "validation_type": "Index Coverage (Daily)",
@@ -105,6 +117,18 @@ async def get_tables():
                 "description": "Company profile validation - Shareholders percentage check",
                 "validation_type": "Company Profile Validation",
                 "rules": "Shareholders share_percentage sum should be ~100% (±1%); sector and industry not empty"
+            },
+            {
+                "name": "idx_financial_sheets_annual",
+                "description": "Annual financial sheets - Accounting rules validation",
+                "validation_type": "Financial Sheets (Annual)",
+                "rules": "1. Net Income Flow: net_income = pretax_income - income_taxes + minorities; 2. Minority Check: If minorities = 0, then net_income must equal profit_attributable_to_parent; 3. Revenue Positivity: total_revenue must always be positive"
+            },
+            {
+                "name": "idx_financial_sheets_quarterly",
+                "description": "Quarterly financial sheets - Accounting rules validation",
+                "validation_type": "Financial Sheets (Quarterly)",
+                "rules": "1. Net Income Flow: net_income = pretax_income - income_taxes + minorities; 2. Minority Check: If minorities = 0, then net_income must equal profit_attributable_to_parent; 3. Revenue Positivity: total_revenue must always be positive"
             }
         ]
         
@@ -381,7 +405,8 @@ async def get_dashboard_stats():
         all_tables = [
             "idx_combine_financials_annual", "idx_combine_financials_quarterly", 
             "idx_daily_data", "idx_daily_data_completeness", "idx_dividend", "idx_all_time_price", 
-            "idx_filings", "idx_stock_split", "idx_news", "sgx_company_report", "sgx_manual_input", "idx_company_profile"
+            "idx_filings", "idx_stock_split", "idx_news", "sgx_company_report", "sgx_manual_input", "idx_company_profile", 
+            "idx_financial_sheets_annual", "idx_financial_sheets_quarterly"
         ]
         total_tables = len(all_tables)
         
@@ -515,6 +540,62 @@ async def get_table_validation_config(table_name: str):
                     "metrics": ["total_revenue", "earnings", "total_assets", "total_equity", "operating_pnl"],
                     "comparison_method": "quarter_over_quarter_percentage",
                     "alert_condition": "absolute change >50% considering average trends"
+                }
+            },
+            "idx_financial_sheets_annual": {
+                "table_name": table_name,
+                "validation_type": "Financial Sheets (Annual)",
+                "description": "Annual financial sheets accounting identity validation",
+                "rules": {
+                    "accounting_rules": [
+                        {
+                            "name": "net_income_flow",
+                            "formula": "net_income = pretax_income - income_taxes + minorities",
+                            "tolerance_relative": 0.001,
+                            "tolerance_absolute": 1000000000
+                        },
+                        {
+                            "name": "minority_check",
+                            "formula": "if minorities = 0 then net_income = profit_attributable_to_parent",
+                            "tolerance_relative": 0.001,
+                            "tolerance_absolute": 1000000000
+                        },
+                        {
+                            "name": "revenue_positivity",
+                            "formula": "total_revenue > 0",
+                            "strict": True
+                        }
+                    ],
+                    "metrics": ["net_income", "pretax_income", "income_taxes", "minorities", "profit_attributable_to_parent", "total_revenue"],
+                    "alert_condition": "accounting identity violation"
+                }
+            },
+            "idx_financial_sheets_quarterly": {
+                "table_name": table_name,
+                "validation_type": "Financial Sheets (Quarterly)",
+                "description": "Quarterly financial sheets accounting identity validation",
+                "rules": {
+                    "accounting_rules": [
+                        {
+                            "name": "net_income_flow",
+                            "formula": "net_income = pretax_income - income_taxes + minorities",
+                            "tolerance_relative": 0.001,
+                            "tolerance_absolute": 1000000000
+                        },
+                        {
+                            "name": "minority_check",
+                            "formula": "if minorities = 0 then net_income = profit_attributable_to_parent",
+                            "tolerance_relative": 0.001,
+                            "tolerance_absolute": 1000000000
+                        },
+                        {
+                            "name": "revenue_positivity",
+                            "formula": "total_revenue > 0",
+                            "strict": True
+                        }
+                    ],
+                    "metrics": ["net_income", "pretax_income", "income_taxes", "minorities", "profit_attributable_to_parent", "total_revenue"],
+                    "alert_condition": "accounting identity violation"
                 }
             },
             "idx_daily_data": {
