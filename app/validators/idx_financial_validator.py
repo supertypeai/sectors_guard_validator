@@ -1964,6 +1964,10 @@ class IDXFinancialValidator(DataValidator):
                                     reported_groups.add(id_b)
                                     
                                     # Convert all values to JSON serializable types
+                                    # Format dates as YYMMDD
+                                    date_1_str = row_a['timestamp'].strftime('%y%m%d') if hasattr(row_a['timestamp'], 'strftime') else str(row_a['timestamp'])
+                                    date_2_str = row_b['timestamp'].strftime('%y%m%d') if hasattr(row_b['timestamp'], 'strftime') else str(row_b['timestamp'])
+                                    
                                     anomalies.append({
                                         "type": "duplicate_transaction",
                                         "transaction_1_id": id_a,
@@ -1976,7 +1980,7 @@ class IDXFinancialValidator(DataValidator):
                                         "date_difference_days": int(date_diff),
                                         "same_holder": bool(same_holder),
                                         "symbol": symbol_a,
-                                        "message": f"Potential duplicate transaction detected: Same amount ({int(row_a['amount_transaction']):,}) shares for {symbol_a}, {date_diff} day(s) apart" + 
+                                        "message": f"Potential duplicate transaction detected: Same amount ({int(row_a['amount_transaction']):,}) shares for {symbol_a} on {date_1_str} and {date_2_str}" + 
                                                   (f", same holder ({row_a.get('holder_name', 'N/A')})" if same_holder else ""),
                                         "severity": "error"
                                     })
