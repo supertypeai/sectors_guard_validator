@@ -49,7 +49,7 @@ async def get_tables():
             {
                 "name": "idx_financial_sheets_quarterly",
                 "description": "Quarterly financial sheets - Accounting identity validation",
-                "validation_type": "Financial Sheets (Quarterly)",
+                "validation_type": "Financial Sheets (Quarterly)", 
                 "rules": "Golden rules: net_income = pretax_income - taxes + minorities; minorities=0 → net_income=profit_parent; revenue>0"
             },
             {
