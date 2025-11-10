@@ -1980,7 +1980,7 @@ class IDXFinancialValidator(DataValidator):
                                         "date_difference_days": int(date_diff),
                                         "same_holder": bool(same_holder),
                                         "symbol": symbol_a,
-                                        "message": f"Potential duplicate transaction detected: Same amount ({int(row_a['amount_transaction']):,}) shares for {symbol_a} on {date_1_str} and {date_2_str}" + 
+                                        "message": f"Potential duplicate transaction detected: Same amount ({int(row_a['amount_transaction']):,}) shares for {symbol_a} on {date_1_str} ({id_a}) and {date_2_str} ({id_b})" + 
                                                   (f", same holder ({row_a.get('holder_name', 'N/A')})" if same_holder else ""),
                                         "severity": "error"
                                     })
