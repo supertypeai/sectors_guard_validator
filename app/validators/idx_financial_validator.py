@@ -1878,42 +1878,43 @@ class IDXFinancialValidator(DataValidator):
                     filing_date = filing['date']
 
                     # Handle tickers as list or string
-                    tickers = filing['tickers']
-                    if isinstance(tickers, str):
-                        try:
-                            tickers = eval(tickers) if tickers.startswith('[') else [tickers]
-                        except:
-                            tickers = [tickers]
-                    elif not isinstance(tickers, list):
-                        continue
+                    ticker = filing['symbol']
 
-                    for ticker in tickers:
-                        try:
-                            daily_data = await self._fetch_ticker_data('idx_daily_data', ticker)
-                        except Exception:
-                            continue
-                        if daily_data is None or daily_data.empty:
-                            continue
-                        daily_data = daily_data.copy()
-                        daily_data['date'] = pd.to_datetime(daily_data['date']).dt.date
-                        matching_daily = daily_data[daily_data['date'] == filing_date]
-                        if matching_daily.empty:
-                            continue
-                        daily_close = float(matching_daily.iloc[0]['close'])
-                        price_diff_pct = abs(filing_price - daily_close) / daily_close * 100
-                        if price_diff_pct >= 50:
-                            anomalies.append({
-                                "type": "filing_price_discrepancy",
-                                "ticker": ticker,
-                                "filing_date": filing_date.strftime('%Y-%m-%d'),
-                                "filing_timestamp": filing['timestamp'].strftime('%Y-%m-%d %H:%M:%S'),
-                                "filing_price": filing_price,
-                                "daily_close_price": daily_close,
-                                "price_difference_pct": round(price_diff_pct, 2),
-                                "message": f"Ticker {ticker} on {filing_date}: Filing price differs significantly from daily close",
-                                "severity": "warning"
-                            })
-                except (ValueError, TypeError):
+                    try:
+                        daily_data = await self._fetch_ticker_data('idx_daily_data', ticker)
+                    except Exception:
+                        continue
+                    if daily_data is None or daily_data.empty:
+                        continue
+                    daily_data = daily_data.copy()
+                    daily_data['date'] = pd.to_datetime(daily_data['date']).dt.date
+                    matching_daily = daily_data[daily_data['date'] == filing_date]
+                    id = filing['id']
+                    if matching_daily.empty:
+                        continue
+                    daily_close = float(matching_daily.iloc[0]['close'])
+                    price_diff_pct = abs(filing_price - daily_close) / daily_close * 100
+                    # print(f"Ticker {ticker} on {filing_date}: filing price {filing_price}, daily close {daily_close}, diff% {price_diff_pct:.2f}%")
+                    if price_diff_pct >= 50.0:
+                        filing_date_str = filing_date.strftime('%Y-%m-%d') if hasattr(filing_date, 'strftime') else str(filing_date)
+                        filing_timestamp_str = filing['timestamp'].strftime('%Y-%m-%d %H:%M:%S') if hasattr(filing['timestamp'], 'strftime') else str(filing['timestamp'])
+                        
+                        anomalies.append({
+                            "type": "filing_price_discrepancy",
+                            "ticker": ticker,
+                            "filing_date": filing_date_str,
+                            "filing_timestamp": filing_timestamp_str,
+                            "filing_price": filing_price,
+                            "daily_close_price": daily_close,
+                            "price_difference_pct": round(price_diff_pct, 2),
+                            "message": f"Filing price differs significantly from daily close by {price_diff_pct:.2f}% for {ticker} on {filing_date_str} with ID {id} (filing: {filing_price:,.2f}, close: {daily_close:,.2f})",
+                            "severity": "error"
+                        })
+                except (ValueError, TypeError) as e:
+                    print(f"⚠️  Error processing filing for {filing.get('symbol', 'unknown')}: {e}")
+                    continue
+                except Exception as e:
+                    print(f"❌ Unexpected error processing filing for {filing.get('symbol', 'unknown')}: {e}")
                     continue
 
             # Rule 2: Detect duplicate transactions
