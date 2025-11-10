@@ -1965,8 +1965,12 @@ class IDXFinancialValidator(DataValidator):
                                     
                                     # Convert all values to JSON serializable types
                                     # Format dates as YYMMDD
-                                    date_1_str = row_a['timestamp'].strftime('%y%m%d') if hasattr(row_a['timestamp'], 'strftime') else str(row_a['timestamp'])
-                                    date_2_str = row_b['timestamp'].strftime('%y%m%d') if hasattr(row_b['timestamp'], 'strftime') else str(row_b['timestamp'])
+                                    date_1_str = row_a['timestamp'].strftime('%Y-%m-%d') if hasattr(row_a['timestamp'], 'strftime') else str(row_a['timestamp'])
+                                    date_2_str = row_b['timestamp'].strftime('%Y-%m-%d') if hasattr(row_b['timestamp'], 'strftime') else str(row_b['timestamp'])
+                                    
+                                    # Build clear message parts
+                                    holder_info = f" by same holder '{row_a.get('holder_name', 'N/A')}'" if same_holder else ""
+                                    date_info = f" ({date_diff} day{'s' if date_diff != 1 else ''} apart)" if date_diff > 0 else " (same day)"
                                     
                                     anomalies.append({
                                         "type": "duplicate_transaction",
@@ -1980,8 +1984,7 @@ class IDXFinancialValidator(DataValidator):
                                         "date_difference_days": int(date_diff),
                                         "same_holder": bool(same_holder),
                                         "symbol": symbol_a,
-                                        "message": f"Potential duplicate transaction detected: Same amount ({int(row_a['amount_transaction']):,}) shares for {symbol_a} on {date_1_str} ({id_a}) and {date_2_str} ({id_b})" + 
-                                                  (f", same holder ({row_a.get('holder_name', 'N/A')})" if same_holder else ""),
+                                        "message": f"Potential duplicate transaction detected for {symbol_a}: {int(row_a['amount_transaction']):,} shares traded on {date_1_str} (ID: {id_a}) and {date_2_str} (ID: {id_b}){date_info}{holder_info}",
                                         "severity": "error"
                                     })
                                     # Only report first match for transaction_a, then move to next transaction
