@@ -119,6 +119,12 @@ async def get_tables():
                 "rules": "Shareholders share_percentage sum should be ~100% (±1%); sector and industry not empty"
             },
             {
+                "name": "idx_sector_reports",
+                "description": "Sector reports data freshness validation",
+                "validation_type": "Sector Reports Validation",
+                "rules": "mcap_summary.monthly_performance must contain data for yesterday or today (Jakarta timezone)"
+            },
+            {
                 "name": "idx_financial_sheets_annual",
                 "description": "Annual financial sheets - Accounting rules validation",
                 "validation_type": "Financial Sheets (Annual)",
@@ -405,7 +411,8 @@ async def get_dashboard_stats():
         all_tables = [
             "idx_combine_financials_annual", "idx_combine_financials_quarterly", 
             "idx_daily_data", "idx_daily_data_completeness", "idx_dividend", "idx_all_time_price", 
-            "idx_filings", "idx_stock_split", "idx_news", "sgx_company_report", "sgx_manual_input", "idx_company_profile", 
+            "idx_filings", "idx_stock_split", "idx_news", "sgx_company_report", "sgx_manual_input", 
+            "idx_company_profile", "idx_sector_reports",
             "idx_financial_sheets_annual", "idx_financial_sheets_quarterly"
         ]
         total_tables = len(all_tables)

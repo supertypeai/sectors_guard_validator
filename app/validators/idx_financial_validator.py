@@ -33,7 +33,8 @@ class IDXFinancialValidator(DataValidator):
             'idx_news': self._validate_news,
             'sgx_company_report': self._validate_sgx_company_report,
             'sgx_manual_input': self._validate_sgx_manual_input,
-            'idx_company_profile': self._validate_company_profile
+            'idx_company_profile': self._validate_company_profile,
+            'idx_sector_reports': self._validate_sector_reports
         }
     
     async def validate_table(self, table_name: str, start_date: Optional[str] = None, end_date: Optional[str] = None, run_only_coverage: bool = False) -> Dict[str, Any]:
@@ -2399,6 +2400,113 @@ class IDXFinancialValidator(DataValidator):
             anomalies.append({
                 "type": "validation_error",
                 "message": f"Error validating company profile data: {str(e)}",
+                "severity": "error"
+            })
+        return {"anomalies": anomalies}
+    
+    async def _validate_sector_reports(self, data: pd.DataFrame) -> Dict[str, Any]:
+        """
+        Validate idx_sector_reports table
+        Condition: Check if mcap_summary.monthly_performance has data for yesterday or today
+        """
+        anomalies = []
+        try:
+            if data is None or data.empty:
+                anomalies.append({
+                    "type": "empty_data",
+                    "message": "idx_sector_reports table is empty",
+                    "severity": "error"
+                })
+                return {"anomalies": anomalies}
+            
+            # Get today and yesterday dates
+            jakarta_tz = pytz.timezone('Asia/Jakarta')
+            today = datetime.now(jakarta_tz).date()
+            yesterday = today - timedelta(days=1)
+            
+            # Convert to string format for comparison
+            today_str = today.strftime('%Y-%m-%d')
+            yesterday_str = yesterday.strftime('%Y-%m-%d')
+            
+            print(f"📅 Checking for dates: {yesterday_str} (yesterday) or {today_str} (today)")
+            
+            for idx in data.index:
+                row = data.loc[idx]
+                sector = row.get('sector', 'Unknown')
+                sub_sector = row.get('sub_sector', 'Unknown')
+                mcap_summary = row.get('mcap_summary')
+                
+                if mcap_summary is None or (isinstance(mcap_summary, float) and pd.isna(mcap_summary)):
+                    anomalies.append({
+                        "type": "missing_mcap_summary",
+                        "sector": sector,
+                        "sub_sector": sub_sector,
+                        "message": f"Sector '{sector}' - Sub-sector '{sub_sector}': mcap_summary is missing or null",
+                        "severity": "error"
+                    })
+                    continue
+                
+                # Handle mcap_summary (JSON)
+                if isinstance(mcap_summary, str):
+                    try:
+                        mcap_summary = json.loads(mcap_summary)
+                    except json.JSONDecodeError:
+                        anomalies.append({
+                            "type": "invalid_json",
+                            "sector": sector,
+                            "sub_sector": sub_sector,
+                            "message": f"Sector '{sector}' - Sub-sector '{sub_sector}': mcap_summary is not valid JSON",
+                            "severity": "error"
+                        })
+                        continue
+                
+                # Check if monthly_performance exists
+                if not isinstance(mcap_summary, dict) or 'monthly_performance' not in mcap_summary:
+                    anomalies.append({
+                        "type": "missing_monthly_performance",
+                        "sector": sector,
+                        "sub_sector": sub_sector,
+                        "message": f"Sector '{sector}' - Sub-sector '{sub_sector}': monthly_performance is missing in mcap_summary",
+                        "severity": "error"
+                    })
+                    continue
+                
+                monthly_performance = mcap_summary['monthly_performance']
+                
+                if not isinstance(monthly_performance, dict):
+                    anomalies.append({
+                        "type": "invalid_monthly_performance",
+                        "sector": sector,
+                        "sub_sector": sub_sector,
+                        "message": f"Sector '{sector}' - Sub-sector '{sub_sector}': monthly_performance is not a dictionary",
+                        "severity": "error"
+                    })
+                    continue
+                
+                # Check if yesterday or today date exists in monthly_performance
+                has_yesterday = yesterday_str in monthly_performance
+                has_today = today_str in monthly_performance
+                
+                if not has_yesterday and not has_today:
+                    available_dates = list(monthly_performance.keys())
+                    latest_date = max(available_dates) if available_dates else "No dates"
+                    
+                    anomalies.append({
+                        "type": "missing_recent_data",
+                        "sector": sector,
+                        "sub_sector": sub_sector,
+                        "message": f"Sector '{sector}' - Sub-sector '{sub_sector}': monthly_performance does not contain data for {yesterday_str} (yesterday) or {today_str} (today). Latest date: {latest_date}",
+                        "expected_dates": [yesterday_str, today_str],
+                        "latest_available_date": latest_date,
+                        "severity": "error"
+                    })
+            
+            print(f"✅ Found {len(anomalies)} sector reports anomalies")
+                    
+        except Exception as e:
+            anomalies.append({
+                "type": "validation_error",
+                "message": f"Error validating sector reports data: {str(e)}",
                 "severity": "error"
             })
         return {"anomalies": anomalies}
