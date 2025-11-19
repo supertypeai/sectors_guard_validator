@@ -34,7 +34,8 @@ class IDXFinancialValidator(DataValidator):
             'sgx_company_report': self._validate_sgx_company_report,
             'sgx_manual_input': self._validate_sgx_manual_input,
             'idx_company_profile': self._validate_company_profile,
-            'idx_sector_reports': self._validate_sector_reports
+            'idx_sector_reports': self._validate_sector_reports,
+            'sgx_filings': self._validate_sgx_filings
         }
     
     async def validate_table(self, table_name: str, start_date: Optional[str] = None, end_date: Optional[str] = None, run_only_coverage: bool = False) -> Dict[str, Any]:
@@ -2507,6 +2508,73 @@ class IDXFinancialValidator(DataValidator):
             anomalies.append({
                 "type": "validation_error",
                 "message": f"Error validating sector reports data: {str(e)}",
+                "severity": "error"
+            })
+        return {"anomalies": anomalies}
+    
+    async def _validate_sgx_filings(self, data: pd.DataFrame) -> Dict[str, any]:
+        """
+        Validate SGX filings data
+        1. Check for duplicates based on composite key 
+        2. Check for missing transaction details 
+        """
+        anomalies = []
+        
+        try:
+            composite_cols = [
+                'url', 
+                'shareholder_name', 
+                'transaction_date', 
+                'shares_before', 
+                'shares_after'
+            ]
+            
+            existing_keys = [col for col in composite_cols if col in data.columns]
+            
+            if existing_keys:
+                duplicates = data[data.duplicated(subset=existing_keys, keep=False)]
+                
+                if not duplicates.empty:
+                    for _, group in duplicates.groupby(existing_keys):
+                        first_row = group.iloc[0]
+                        
+                        duplicate_ids = group.get('id').tolist() if 'id' in group.columns else []
+
+                        anomalies.append({
+                            "type": "duplicate_filing_record",
+                            "message": f"Duplicate filing detected for {first_row.get('shareholder_name')} on {first_row.get('transaction_date')}",
+                            "severity": "error",
+                            "duplicate_count": len(group),
+                            "duplicate_ids": duplicate_ids,  
+                            "key_details": {key: str(first_row.get(key)) for key in existing_keys}
+                        })
+
+            if 'transaction_type' in data.columns: 
+                critical_fields = ['number_of_stock', 'value', 'price_per_share']
+                existing_critical = [col for col in critical_fields if col in data.columns]
+
+                if existing_critical:
+                    has_transaction = data['transaction_type'].notna() & (data['transaction_type'] != '')
+                    missing_details = data[existing_critical].isna().any(axis=1)
+                    problematic_rows = data[has_transaction & missing_details]
+                    
+                    for _, row in problematic_rows.iterrows():
+                        missing_cols = [col for col in existing_critical if pd.isna(row[col])]
+                        
+                        anomalies.append({
+                            "type": "missing_transaction_details",
+                            "message": f"Transaction type '{row.get('transaction_type')}' is present but details are missing: {', '.join(missing_cols)}",
+                            "severity": "error",
+                            "id": row.get('id'),  
+                            "symbol": row.get('symbol'),
+                            "transaction_date": row.get('transaction_date'),
+                            "url": row.get('url')
+                        })
+
+        except Exception as e:
+            anomalies.append({
+                "type": "validation_error",
+                "message": f"Error validating sgx filings data: {str(e)}",
                 "severity": "error"
             })
         return {"anomalies": anomalies}

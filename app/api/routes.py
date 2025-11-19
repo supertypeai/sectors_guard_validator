@@ -135,6 +135,12 @@ async def get_tables():
                 "description": "Quarterly financial sheets - Accounting rules validation",
                 "validation_type": "Financial Sheets (Quarterly)",
                 "rules": "1. Net Income Flow: net_income = pretax_income - income_taxes + minorities; 2. Minority Check: If minorities = 0, then net_income must equal profit_attributable_to_parent; 3. Revenue Positivity: total_revenue must always be positive"
+            },
+            {
+                "name": "sgx_filings",
+                "description": "SGX filings data - Duplicate and data completeness validation",
+                "validation_type": "SGX Filings Validation",
+                "rules": "1. Duplicate checks on composite key (url, shareholder_name, transaction_date, shares_before, shares_after); 2. Missing transaction details check (number_of_stock, value, price_per_share)"
             }
         ]
         
@@ -833,7 +839,8 @@ async def get_table_data(
             'idx_dividend',
             'idx_all_time_price',
             'idx_stock_split',
-            'idx_filings'
+            'idx_filings',
+            'sgx_filings'
         ]
         
         if table_name not in valid_tables:
@@ -854,12 +861,16 @@ async def get_table_data(
         if start_date:
             if table_name == 'idx_filings':
                 query = query.gte("timestamp", start_date)
+            elif table_name == 'sgx_filings':
+                query = query.gte("transaction_date", end_date)
             else:
                 query = query.gte("date", start_date)
                 
         if end_date:
             if table_name == 'idx_filings':
                 query = query.lte("timestamp", end_date) 
+            elif table_name == 'sgx_filings':
+                query = query.lte("transaction_date", end_date)
             else:
                 query = query.lte("date", end_date)
         
@@ -870,6 +881,8 @@ async def get_table_data(
         # Order by date (most recent first)
         if table_name == 'idx_filings':
             query = query.order("timestamp", desc=True)
+        elif table_name == 'sgx_filings':
+            query = query.order("transaction_date", desc=True)
         else:
             query = query.order("date", desc=True)
         
