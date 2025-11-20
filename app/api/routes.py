@@ -141,6 +141,12 @@ async def get_tables():
                 "description": "SGX filings data - Duplicate and data completeness validation",
                 "validation_type": "SGX Filings Validation",
                 "rules": "1. Duplicate checks on composite key (url, shareholder_name, transaction_date, shares_before, shares_after); 2. Missing transaction details check (number_of_stock, value, price_per_share)"
+            },
+            {
+                "name": "rpc_functions",
+                "description": "Supabase RPC functions validation - Date freshness and data availability checks",
+                "validation_type": "RPC Functions Validation",
+                "rules": "16 functions: get_idx_mcap_data_1m, get_indices_price_changes, get_top_mcap_gainers/losers, get_top_gainers/losers, get_peers_and_idx_valuation_summary, get_idx_peers_growth_and_forecasts, get_news_per_dimensions_by_ticker_subsector, get_idx_yield_ttm, get_companies_loan_quality, get_idx_resilience, get_companies_state_owned, get_upcoming_dividends_and_splits, get_idx_most_traded, get_idx_volume"
             }
         ]
         
@@ -157,6 +163,92 @@ async def get_tables():
         
         return {"tables": all_tables}
     except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@validation_router.post("/run/rpc-functions")
+async def run_rpc_validation(_: None = Depends(verify_bearer_token)):
+    """Run validation for all Supabase RPC functions"""
+    try:
+        print("🔍 [API] Running RPC functions validation")
+        
+        validator = IDXFinancialValidator()
+        result = await validator.validate_rpc_functions()
+        
+        print(f"✅ [API] RPC validation completed - Status: {result.get('status')}, Anomalies: {result.get('anomalies_count', 0)}")
+        
+        # Store results in database
+        try:
+            supabase = get_supabase_client()
+            storage_result = {
+                "table_name": "rpc_functions",
+                "validation_timestamp": result.get("validation_timestamp"),
+                "status": result.get("status"),
+                "anomalies_count": result.get("anomalies_count", 0),
+                "total_rows": result.get("total_functions_checked", 16),
+                "anomalies": json.dumps(result.get("anomalies", [])),
+                "validations_performed": ["rpc_function_validation"]
+            }
+            supabase.table("validation_results").insert(storage_result).execute()
+            print("💾 [API] RPC validation results stored in database")
+        except Exception as db_error:
+            print(f"⚠️  [API] Failed to store RPC validation results: {db_error}")
+        
+        # Send email if anomalies detected
+        if result.get("anomalies_count", 0) > 0:
+            try:
+                email_helper = EmailHelper()
+                await email_helper.notify_validation_complete("rpc_functions", result, send_email=True)
+                print("📧 [API] Email notification sent for RPC anomalies")
+            except Exception as email_error:
+                print(f"⚠️  [API] Failed to send email notification: {email_error}")
+        
+        return result
+        
+    except Exception as e:
+        print(f"❌ [API] Error running RPC validation: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@validation_router.post("/run/rpc-functions/{function_name}")
+async def run_single_rpc_validation(function_name: str, _: None = Depends(verify_bearer_token)):
+    """Run validation for a single Supabase RPC function"""
+    try:
+        print(f"🔍 [API] Running validation for RPC function: {function_name}")
+        
+        validator = IDXFinancialValidator()
+        result = await validator.validate_rpc_functions(function_name=function_name)
+        
+        print(f"✅ [API] RPC '{function_name}' validation completed - Status: {result.get('status')}, Anomalies: {result.get('anomalies_count', 0)}")
+        
+        # Store results in database
+        try:
+            supabase = get_supabase_client()
+            storage_result = {
+                "table_name": f"rpc_{function_name}",
+                "validation_timestamp": result.get("validation_timestamp"),
+                "status": result.get("status"),
+                "anomalies_count": result.get("anomalies_count", 0),
+                "total_rows": result.get("total_functions_checked", 1),
+                "anomalies": json.dumps(result.get("anomalies", [])),
+                "validations_performed": [f"rpc_{function_name}_validation"]
+            }
+            supabase.table("validation_results").insert(storage_result).execute()
+            print(f"💾 [API] RPC '{function_name}' validation results stored in database")
+        except Exception as db_error:
+            print(f"⚠️  [API] Failed to store RPC validation results: {db_error}")
+        
+        # Send email if anomalies detected
+        if result.get("anomalies_count", 0) > 0:
+            try:
+                email_helper = EmailHelper()
+                await email_helper.notify_validation_complete("rpc_functions", result, send_email=True)
+                print("📧 [API] Email notification sent for RPC anomalies")
+            except Exception as email_error:
+                print(f"⚠️  [API] Failed to send email notification: {email_error}")
+        
+        return result
+        
+    except Exception as e:
+        print(f"❌ [API] Error running RPC validation: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @validation_router.post("/run/{table_name}")
@@ -419,7 +511,7 @@ async def get_dashboard_stats():
             "idx_daily_data", "idx_daily_data_completeness", "idx_dividend", "idx_all_time_price", 
             "idx_filings", "idx_stock_split", "idx_news", "sgx_company_report", "sgx_manual_input", 
             "idx_company_profile", "idx_sector_reports",
-            "idx_financial_sheets_annual", "idx_financial_sheets_quarterly", "sgx_filings"
+            "idx_financial_sheets_annual", "idx_financial_sheets_quarterly", "sgx_filings", "rpc_functions"
         ]
         total_tables = len(all_tables)
         

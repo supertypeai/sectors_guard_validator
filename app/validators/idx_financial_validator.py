@@ -2578,3 +2578,781 @@ class IDXFinancialValidator(DataValidator):
                 "severity": "error"
             })
         return {"anomalies": anomalies}
+    
+    async def _get_latest_daily_date(self) -> Optional[Any]:
+        """Helper to get latest date from idx_daily_data"""
+        try:
+            response = self.supabase.table('idx_daily_data').select('date').order('date', desc=True).limit(1).execute()
+            if response.data:
+                return pd.to_datetime(response.data[0]['date']).date()
+            return None
+        except Exception:
+            return None
+    
+    async def validate_rpc_get_idx_mcap_data_1m(self) -> Dict[str, Any]:
+        """Validate get_idx_mcap_data_1m() - last date = latest date in daily data"""
+        anomalies = []
+        try:
+            latest_daily_date = await self._get_latest_daily_date()
+            if not latest_daily_date:
+                anomalies.append({
+                    "type": "reference_data_missing",
+                    "rpc_function": "get_idx_mcap_data_1m",
+                    "message": "Cannot get latest date from idx_daily_data",
+                    "severity": "error"
+                })
+                return {"anomalies": anomalies}
+            
+            response = self.supabase.rpc('get_idx_mcap_data_1m', {}).execute()
+            if response.data:
+                df = pd.DataFrame(response.data)
+                if 'date' in df.columns:
+                    df['date'] = pd.to_datetime(df['date']).dt.date
+                    max_date = df['date'].max()
+                    yesterday = latest_daily_date - timedelta(days=1)
+                    if max_date < yesterday:
+                        anomalies.append({
+                            "type": "date_outdated",
+                            "rpc_function": "get_idx_mcap_data_1m",
+                            "message": f"Last date {max_date} is older than yesterday {yesterday} (latest daily data: {latest_daily_date})",
+                            "expected_min_date": str(yesterday),
+                            "actual_date": str(max_date),
+                            "severity": "error"
+                        })
+                else:
+                    anomalies.append({
+                        "type": "missing_column",
+                        "rpc_function": "get_idx_mcap_data_1m",
+                        "message": "Response missing 'date' column",
+                        "severity": "error"
+                    })
+            else:
+                anomalies.append({
+                    "type": "no_data_returned",
+                    "rpc_function": "get_idx_mcap_data_1m",
+                    "message": "RPC function returned no data",
+                    "severity": "error"
+                })
+        except Exception as e:
+            anomalies.append({
+                "type": "rpc_execution_error",
+                "rpc_function": "get_idx_mcap_data_1m",
+                "message": f"Error executing RPC: {str(e)}",
+                "severity": "error"
+            })
+        return {"anomalies": anomalies}
+    
+    async def validate_rpc_get_indices_price_changes(self) -> Dict[str, Any]:
+        """Validate get_indices_price_changes() - latest date = latest date in daily data"""
+        anomalies = []
+        try:
+            latest_daily_date = await self._get_latest_daily_date()
+            if not latest_daily_date:
+                anomalies.append({
+                    "type": "reference_data_missing",
+                    "rpc_function": "get_indices_price_changes",
+                    "message": "Cannot get latest date from idx_daily_data",
+                    "severity": "error"
+                })
+                return {"anomalies": anomalies}
+            
+            response = self.supabase.rpc('get_indices_price_changes', {}).execute()
+            if response.data:
+                df = pd.DataFrame(response.data)
+                if 'date' in df.columns:
+                    df['date'] = pd.to_datetime(df['date']).dt.date
+                    max_date = df['date'].max()
+                    if max_date != latest_daily_date:
+                        anomalies.append({
+                            "type": "date_mismatch",
+                            "rpc_function": "get_indices_price_changes",
+                            "message": f"Latest date {max_date} does not match latest daily data date {latest_daily_date}",
+                            "expected_date": str(latest_daily_date),
+                            "actual_date": str(max_date),
+                            "severity": "error"
+                        })
+                else:
+                    anomalies.append({
+                        "type": "missing_column",
+                        "rpc_function": "get_indices_price_changes",
+                        "message": "Response missing 'date' column",
+                        "severity": "error"
+                    })
+            else:
+                anomalies.append({
+                    "type": "no_data_returned",
+                    "rpc_function": "get_indices_price_changes",
+                    "message": "RPC function returned no data",
+                    "severity": "error"
+                })
+        except Exception as e:
+            anomalies.append({
+                "type": "rpc_execution_error",
+                "rpc_function": "get_indices_price_changes",
+                "message": f"Error executing RPC: {str(e)}",
+                "severity": "error"
+            })
+        return {"anomalies": anomalies}
+    
+    async def validate_rpc_get_top_mcap_gainers(self) -> Dict[str, Any]:
+        """Validate get_top_mcap_gainers(1) - latest close date = latest date in daily data"""
+        anomalies = []
+        try:
+            latest_daily_date = await self._get_latest_daily_date()
+            if not latest_daily_date:
+                anomalies.append({
+                    "type": "reference_data_missing",
+                    "rpc_function": "get_top_mcap_gainers(1)",
+                    "message": "Cannot get latest date from idx_daily_data",
+                    "severity": "error"
+                })
+                return {"anomalies": anomalies}
+            
+            response = self.supabase.rpc('get_top_mcap_gainers', {'p_days': 1}).execute()
+            if response.data:
+                df = pd.DataFrame(response.data)
+                date_col = None
+                for col in ['date', 'latest_date', 'close_date']:
+                    if col in df.columns:
+                        date_col = col
+                        break
+                if date_col:
+                    df[date_col] = pd.to_datetime(df[date_col]).dt.date
+                    max_date = df[date_col].max()
+                    yesterday = latest_daily_date - timedelta(days=1)
+                    if max_date < yesterday:
+                        anomalies.append({
+                            "type": "date_outdated",
+                            "rpc_function": "get_top_mcap_gainers(1)",
+                            "message": f"Latest close date {max_date} is older than yesterday {yesterday} (latest daily data: {latest_daily_date})",
+                            "expected_min_date": str(yesterday),
+                            "actual_date": str(max_date),
+                            "severity": "error"
+                        })
+                else:
+                    anomalies.append({
+                        "type": "missing_column",
+                        "rpc_function": "get_top_mcap_gainers(1)",
+                        "message": "Response missing date column",
+                        "severity": "error"
+                    })
+            else:
+                anomalies.append({
+                    "type": "no_data_returned",
+                    "rpc_function": "get_top_mcap_gainers(1)",
+                    "message": "RPC function returned no data",
+                    "severity": "error"
+                })
+        except Exception as e:
+            anomalies.append({
+                "type": "rpc_execution_error",
+                "rpc_function": "get_top_mcap_gainers(1)",
+                "message": f"Error executing RPC: {str(e)}",
+                "severity": "error"
+            })
+        return {"anomalies": anomalies}
+    
+    async def validate_rpc_get_top_mcap_losers(self) -> Dict[str, Any]:
+        """Validate get_top_mcap_losers(1) - latest close date = latest date in daily data"""
+        anomalies = []
+        try:
+            latest_daily_date = await self._get_latest_daily_date()
+            if not latest_daily_date:
+                anomalies.append({
+                    "type": "reference_data_missing",
+                    "rpc_function": "get_top_mcap_losers(1)",
+                    "message": "Cannot get latest date from idx_daily_data",
+                    "severity": "error"
+                })
+                return {"anomalies": anomalies}
+            
+            response = self.supabase.rpc('get_top_mcap_losers', {'p_days': 1}).execute()
+            if response.data:
+                df = pd.DataFrame(response.data)
+                date_col = None
+                for col in ['date', 'latest_date', 'close_date']:
+                    if col in df.columns:
+                        date_col = col
+                        break
+                if date_col:
+                    df[date_col] = pd.to_datetime(df[date_col]).dt.date
+                    max_date = df[date_col].max()
+                    yesterday = latest_daily_date - timedelta(days=1)
+                    if max_date < yesterday:
+                        anomalies.append({
+                            "type": "date_outdated",
+                            "rpc_function": "get_top_mcap_losers(1)",
+                            "message": f"Latest close date {max_date} is older than yesterday {yesterday} (latest daily data: {latest_daily_date})",
+                            "expected_min_date": str(yesterday),
+                            "actual_date": str(max_date),
+                            "severity": "error"
+                        })
+                else:
+                    anomalies.append({
+                        "type": "missing_column",
+                        "rpc_function": "get_top_mcap_losers(1)",
+                        "message": "Response missing date column",
+                        "severity": "error"
+                    })
+            else:
+                anomalies.append({
+                    "type": "no_data_returned",
+                    "rpc_function": "get_top_mcap_losers(1)",
+                    "message": "RPC function returned no data",
+                    "severity": "error"
+                })
+        except Exception as e:
+            anomalies.append({
+                "type": "rpc_execution_error",
+                "rpc_function": "get_top_mcap_losers(1)",
+                "message": f"Error executing RPC: {str(e)}",
+                "severity": "error"
+            })
+        return {"anomalies": anomalies}
+    
+    async def validate_rpc_get_top_gainers(self) -> Dict[str, Any]:
+        """Validate get_top_gainers(2,true) - latest close date = latest date in daily data"""
+        anomalies = []
+        try:
+            latest_daily_date = await self._get_latest_daily_date()
+            if not latest_daily_date:
+                anomalies.append({
+                    "type": "reference_data_missing",
+                    "rpc_function": "get_top_gainers(2,true)",
+                    "message": "Cannot get latest date from idx_daily_data",
+                    "severity": "error"
+                })
+                return {"anomalies": anomalies}
+            
+            response = self.supabase.rpc('get_top_gainers', {'p_days': 2, 'p_use_market_cap': True}).execute()
+            if response.data:
+                df = pd.DataFrame(response.data)
+                date_col = None
+                for col in ['date', 'latest_date', 'close_date']:
+                    if col in df.columns:
+                        date_col = col
+                        break
+                if date_col:
+                    df[date_col] = pd.to_datetime(df[date_col]).dt.date
+                    max_date = df[date_col].max()
+                    yesterday = latest_daily_date - timedelta(days=1)
+                    if max_date < yesterday:
+                        anomalies.append({
+                            "type": "date_outdated",
+                            "rpc_function": "get_top_gainers(2,true)",
+                            "message": f"Latest close date {max_date} is older than yesterday {yesterday} (latest daily data: {latest_daily_date})",
+                            "expected_min_date": str(yesterday),
+                            "actual_date": str(max_date),
+                            "severity": "error"
+                        })
+                else:
+                    anomalies.append({
+                        "type": "missing_column",
+                        "rpc_function": "get_top_gainers(2,true)",
+                        "message": "Response missing date column",
+                        "severity": "error"
+                    })
+            else:
+                anomalies.append({
+                    "type": "no_data_returned",
+                    "rpc_function": "get_top_gainers(2,true)",
+                    "message": "RPC function returned no data",
+                    "severity": "error"
+                })
+        except Exception as e:
+            anomalies.append({
+                "type": "rpc_execution_error",
+                "rpc_function": "get_top_gainers(2,true)",
+                "message": f"Error executing RPC: {str(e)}",
+                "severity": "error"
+            })
+        return {"anomalies": anomalies}
+    
+    async def validate_rpc_get_top_losers(self) -> Dict[str, Any]:
+        """Validate get_top_losers(2,true) - latest close date = latest date in daily data"""
+        anomalies = []
+        try:
+            latest_daily_date = await self._get_latest_daily_date()
+            if not latest_daily_date:
+                anomalies.append({
+                    "type": "reference_data_missing",
+                    "rpc_function": "get_top_losers(2,true)",
+                    "message": "Cannot get latest date from idx_daily_data",
+                    "severity": "error"
+                })
+                return {"anomalies": anomalies}
+            
+            response = self.supabase.rpc('get_top_losers', {'p_days': 2, 'p_use_market_cap': True}).execute()
+            if response.data:
+                df = pd.DataFrame(response.data)
+                date_col = None
+                for col in ['date', 'latest_date', 'close_date']:
+                    if col in df.columns:
+                        date_col = col
+                        break
+                if date_col:
+                    df[date_col] = pd.to_datetime(df[date_col]).dt.date
+                    max_date = df[date_col].max()
+                    yesterday = latest_daily_date - timedelta(days=1)
+                    if max_date < yesterday:
+                        anomalies.append({
+                            "type": "date_outdated",
+                            "rpc_function": "get_top_losers(2,true)",
+                            "message": f"Latest close date {max_date} is older than yesterday {yesterday} (latest daily data: {latest_daily_date})",
+                            "expected_min_date": str(yesterday),
+                            "actual_date": str(max_date),
+                            "severity": "error"
+                        })
+                else:
+                    anomalies.append({
+                        "type": "missing_column",
+                        "rpc_function": "get_top_losers(2,true)",
+                        "message": "Response missing date column",
+                        "severity": "error"
+                    })
+            else:
+                anomalies.append({
+                    "type": "no_data_returned",
+                    "rpc_function": "get_top_losers(2,true)",
+                    "message": "RPC function returned no data",
+                    "severity": "error"
+                })
+        except Exception as e:
+            anomalies.append({
+                "type": "rpc_execution_error",
+                "rpc_function": "get_top_losers(2,true)",
+                "message": f"Error executing RPC: {str(e)}",
+                "severity": "error"
+            })
+        return {"anomalies": anomalies}
+    
+    async def validate_rpc_get_peers_and_idx_valuation_summary(self) -> Dict[str, Any]:
+        """Validate get_peers_and_idx_valuation_summary('banks') - ensure data is returned"""
+        anomalies = []
+        try:
+            response = self.supabase.rpc('get_peers_and_idx_valuation_summary', {'p_sub_sector': 'banks'}).execute()
+            if not response.data:
+                anomalies.append({
+                    "type": "no_data_returned",
+                    "rpc_function": "get_peers_and_idx_valuation_summary('banks')",
+                    "message": "RPC function returned no data",
+                    "severity": "error"
+                })
+        except Exception as e:
+            anomalies.append({
+                "type": "rpc_execution_error",
+                "rpc_function": "get_peers_and_idx_valuation_summary('banks')",
+                "message": f"Error executing RPC: {str(e)}",
+                "severity": "error"
+            })
+        return {"anomalies": anomalies}
+    
+    async def validate_rpc_get_idx_peers_growth_and_forecasts(self) -> Dict[str, Any]:
+        """Validate get_idx_peers_growth_and_forecasts('financial','banks') - ensure data is returned"""
+        anomalies = []
+        try:
+            response = self.supabase.rpc('get_idx_peers_growth_and_forecasts', {'p_sector': 'financial', 'p_sub_sector': 'banks'}).execute()
+            if not response.data:
+                anomalies.append({
+                    "type": "no_data_returned",
+                    "rpc_function": "get_idx_peers_growth_and_forecasts('financial','banks')",
+                    "message": "RPC function returned no data",
+                    "severity": "error"
+                })
+        except Exception as e:
+            anomalies.append({
+                "type": "rpc_execution_error",
+                "rpc_function": "get_idx_peers_growth_and_forecasts('financial','banks')",
+                "message": f"Error executing RPC: {str(e)}",
+                "severity": "error"
+            })
+        return {"anomalies": anomalies}
+    
+    async def validate_rpc_get_news_per_dimensions_by_ticker_subsector(self) -> Dict[str, Any]:
+        """Validate get_news_per_dimensions_by_ticker_subsector('BBCA.JK','banks') - ensure data is returned"""
+        anomalies = []
+        try:
+            response = self.supabase.rpc('get_news_per_dimensions_by_ticker_subsector', {'ticker': 'BBCA.JK', 'sub_sector_input': 'banks'}).execute()
+            if not response.data:
+                anomalies.append({
+                    "type": "no_data_returned",
+                    "rpc_function": "get_news_per_dimensions_by_ticker_subsector('BBCA.JK','banks')",
+                    "message": "RPC function returned no data",
+                    "severity": "warning"  # News might legitimately be empty
+                })
+        except Exception as e:
+            anomalies.append({
+                "type": "rpc_execution_error",
+                "rpc_function": "get_news_per_dimensions_by_ticker_subsector('BBCA.JK','banks')",
+                "message": f"Error executing RPC: {str(e)}",
+                "severity": "error"
+            })
+        return {"anomalies": anomalies}
+    
+    async def validate_rpc_get_idx_yield_ttm(self) -> Dict[str, Any]:
+        """Validate get_idx_yield_ttm() - ensure data is returned"""
+        anomalies = []
+        try:
+            response = self.supabase.rpc('get_idx_yield_ttm', {}).execute()
+            if not response.data:
+                anomalies.append({
+                    "type": "no_data_returned",
+                    "rpc_function": "get_idx_yield_ttm",
+                    "message": "RPC function returned no data",
+                    "severity": "error"
+                })
+        except Exception as e:
+            anomalies.append({
+                "type": "rpc_execution_error",
+                "rpc_function": "get_idx_yield_ttm",
+                "message": f"Error executing RPC: {str(e)}",
+                "severity": "error"
+            })
+        return {"anomalies": anomalies}
+    
+    async def validate_rpc_get_companies_loan_quality(self) -> Dict[str, Any]:
+        """Validate get_companies_loan_quality() - latest data per symbol is current_year - 1"""
+        anomalies = []
+        try:
+            jakarta_tz = pytz.timezone('Asia/Jakarta')
+            today = datetime.now(jakarta_tz).date()
+            expected_year = today.year - 1
+            
+            response = self.supabase.rpc('get_companies_loan_quality', {}).execute()
+            if response.data:
+                df = pd.DataFrame(response.data)
+                if 'date' in df.columns and 'symbol' in df.columns:
+                    df['date'] = pd.to_datetime(df['date'])
+                    df['year'] = df['date'].dt.year
+                    
+                    # Group by symbol and check latest year
+                    for symbol, group in df.groupby('symbol'):
+                        max_year = group['year'].max()
+                        if max_year != expected_year:
+                            anomalies.append({
+                                "type": "year_mismatch",
+                                "rpc_function": "get_companies_loan_quality",
+                                "symbol": symbol,
+                                "message": f"Latest data for {symbol} is year {max_year}, expected {expected_year}",
+                                "expected_year": expected_year,
+                                "actual_year": int(max_year),
+                                "severity": "error"
+                            })
+                else:
+                    anomalies.append({
+                        "type": "missing_column",
+                        "rpc_function": "get_companies_loan_quality",
+                        "message": "Response missing 'date' or 'symbol' column",
+                        "severity": "error"
+                    })
+            else:
+                anomalies.append({
+                    "type": "no_data_returned",
+                    "rpc_function": "get_companies_loan_quality",
+                    "message": "RPC function returned no data",
+                    "severity": "error"
+                })
+        except Exception as e:
+            anomalies.append({
+                "type": "rpc_execution_error",
+                "rpc_function": "get_companies_loan_quality",
+                "message": f"Error executing RPC: {str(e)}",
+                "severity": "error"
+            })
+        return {"anomalies": anomalies}
+    
+    async def validate_rpc_get_idx_resilience(self) -> Dict[str, Any]:
+        """Validate get_idx_resilience() - ensure data is returned"""
+        anomalies = []
+        try:
+            response = self.supabase.rpc('get_idx_resilience', {}).execute()
+            if not response.data:
+                anomalies.append({
+                    "type": "no_data_returned",
+                    "rpc_function": "get_idx_resilience",
+                    "message": "RPC function returned no data",
+                    "severity": "error"
+                })
+        except Exception as e:
+            anomalies.append({
+                "type": "rpc_execution_error",
+                "rpc_function": "get_idx_resilience",
+                "message": f"Error executing RPC: {str(e)}",
+                "severity": "error"
+            })
+        return {"anomalies": anomalies}
+    
+    async def validate_rpc_get_companies_state_owned(self) -> Dict[str, Any]:
+        """Validate get_companies_state_owned() - ensure data is returned"""
+        anomalies = []
+        try:
+            response = self.supabase.rpc('get_companies_state_owned', {}).execute()
+            if not response.data:
+                anomalies.append({
+                    "type": "no_data_returned",
+                    "rpc_function": "get_companies_state_owned",
+                    "message": "RPC function returned no data",
+                    "severity": "error"
+                })
+        except Exception as e:
+            anomalies.append({
+                "type": "rpc_execution_error",
+                "rpc_function": "get_companies_state_owned",
+                "message": f"Error executing RPC: {str(e)}",
+                "severity": "error"
+            })
+        return {"anomalies": anomalies}
+    
+    async def validate_rpc_get_upcoming_dividends_and_splits(self) -> Dict[str, Any]:
+        """Validate get_upcoming_dividends_and_splits() - all dates must be > today"""
+        anomalies = []
+        try:
+            jakarta_tz = pytz.timezone('Asia/Jakarta')
+            today = datetime.now(jakarta_tz).date()
+            
+            response = self.supabase.rpc('get_upcoming_dividends_and_splits', {}).execute()
+            if response.data:
+                df = pd.DataFrame(response.data)
+                date_cols = ['date', 'ex_date', 'payment_date', 'record_date']
+                found_date_col = None
+                for col in date_cols:
+                    if col in df.columns:
+                        found_date_col = col
+                        break
+                
+                if found_date_col:
+                    df[found_date_col] = pd.to_datetime(df[found_date_col]).dt.date
+                    yesterday = today - timedelta(days=1)
+                    outdated_dates = df[df[found_date_col] < yesterday]
+                    if not outdated_dates.empty:
+                        anomalies.append({
+                            "type": "outdated_dates_found",
+                            "rpc_function": "get_upcoming_dividends_and_splits",
+                            "message": f"Found {len(outdated_dates)} records with dates < yesterday {yesterday} (should be >= yesterday)",
+                            "count": len(outdated_dates),
+                            "severity": "error"
+                        })
+                else:
+                    anomalies.append({
+                        "type": "missing_column",
+                        "rpc_function": "get_upcoming_dividends_and_splits",
+                        "message": f"Response missing date column (checked: {date_cols})",
+                        "severity": "error"
+                    })
+            else:
+                anomalies.append({
+                    "type": "no_data_returned",
+                    "rpc_function": "get_upcoming_dividends_and_splits",
+                    "message": "RPC function returned no data",
+                    "severity": "warning"  # Might be no upcoming events
+                })
+        except Exception as e:
+            anomalies.append({
+                "type": "rpc_execution_error",
+                "rpc_function": "get_upcoming_dividends_and_splits",
+                "message": f"Error executing RPC: {str(e)}",
+                "severity": "error"
+            })
+        return {"anomalies": anomalies}
+    
+    async def validate_rpc_get_idx_most_traded(self) -> Dict[str, Any]:
+        """Validate get_idx_most_traded(1,5) - date = latest date in idx daily data"""
+        anomalies = []
+        try:
+            latest_daily_date = await self._get_latest_daily_date()
+            if not latest_daily_date:
+                anomalies.append({
+                    "type": "reference_data_missing",
+                    "rpc_function": "get_idx_most_traded(1,5)",
+                    "message": "Cannot get latest date from idx_daily_data",
+                    "severity": "error"
+                })
+                return {"anomalies": anomalies}
+            
+            response = self.supabase.rpc('get_idx_most_traded', {'adjusted': True, 'n_days': 1, 'n_stock': 5}).execute()
+            if response.data:
+                df = pd.DataFrame(response.data)
+                if 'date' in df.columns:
+                    df['date'] = pd.to_datetime(df['date']).dt.date
+                    max_date = df['date'].max()
+                    if max_date != latest_daily_date:
+                        anomalies.append({
+                            "type": "date_mismatch",
+                            "rpc_function": "get_idx_most_traded(1,5)",
+                            "message": f"Date {max_date} does not match latest daily data date {latest_daily_date}",
+                            "expected_date": str(latest_daily_date),
+                            "actual_date": str(max_date),
+                            "severity": "error"
+                        })
+                else:
+                    anomalies.append({
+                        "type": "missing_column",
+                        "rpc_function": "get_idx_most_traded(1,5)",
+                        "message": "Response missing 'date' column",
+                        "severity": "error"
+                    })
+            else:
+                anomalies.append({
+                    "type": "no_data_returned",
+                    "rpc_function": "get_idx_most_traded(1,5)",
+                    "message": "RPC function returned no data",
+                    "severity": "error"
+                })
+        except Exception as e:
+            anomalies.append({
+                "type": "rpc_execution_error",
+                "rpc_function": "get_idx_most_traded(1,5)",
+                "message": f"Error executing RPC: {str(e)}",
+                "severity": "error"
+            })
+        return {"anomalies": anomalies}
+    
+    async def validate_rpc_get_idx_volume(self) -> Dict[str, Any]:
+        """Validate get_idx_volume(1) - date = latest date in idx daily data"""
+        anomalies = []
+        try:
+            latest_daily_date = await self._get_latest_daily_date()
+            if not latest_daily_date:
+                anomalies.append({
+                    "type": "reference_data_missing",
+                    "rpc_function": "get_idx_volume(1)",
+                    "message": "Cannot get latest date from idx_daily_data",
+                    "severity": "error"
+                })
+                return {"anomalies": anomalies}
+            
+            response = self.supabase.rpc('get_idx_volume', {'n_days': 1}).execute()
+            if response.data:
+                df = pd.DataFrame(response.data)
+                if 'date' in df.columns:
+                    df['date'] = pd.to_datetime(df['date']).dt.date
+                    max_date = df['date'].max()
+                    if max_date != latest_daily_date:
+                        anomalies.append({
+                            "type": "date_mismatch",
+                            "rpc_function": "get_idx_volume(1)",
+                            "message": f"Date {max_date} does not match latest daily data date {latest_daily_date}",
+                            "expected_date": str(latest_daily_date),
+                            "actual_date": str(max_date),
+                            "severity": "error"
+                        })
+                else:
+                    anomalies.append({
+                        "type": "missing_column",
+                        "rpc_function": "get_idx_volume(1)",
+                        "message": "Response missing 'date' column",
+                        "severity": "error"
+                    })
+            else:
+                anomalies.append({
+                    "type": "no_data_returned",
+                    "rpc_function": "get_idx_volume(1)",
+                    "message": "RPC function returned no data",
+                    "severity": "error"
+                })
+        except Exception as e:
+            anomalies.append({
+                "type": "rpc_execution_error",
+                "rpc_function": "get_idx_volume(1)",
+                "message": f"Error executing RPC: {str(e)}",
+                "severity": "error"
+            })
+        return {"anomalies": anomalies}
+    
+    async def validate_rpc_functions(self, function_name: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Validate Supabase RPC functions to ensure they return data with correct date constraints
+        
+        Args:
+            function_name: Optional specific RPC function to validate. If None, validates all.
+                          Valid values: 'get_idx_mcap_data_1m', 'get_indices_price_changes', 
+                          'get_top_mcap_gainers', 'get_top_mcap_losers', 'get_top_gainers',
+                          'get_top_losers', 'get_peers_and_idx_valuation_summary',
+                          'get_idx_peers_growth_and_forecasts', 
+                          'get_news_per_dimensions_by_ticker_subsector',
+                          'get_idx_yield_ttm', 'get_companies_loan_quality',
+                          'get_idx_resilience', 'get_companies_state_owned',
+                          'get_upcoming_dividends_and_splits', 'get_idx_most_traded',
+                          'get_idx_volume'
+        
+        Returns:
+            Dict with validation results including anomalies
+        """
+        anomalies: List[Dict[str, Any]] = []
+        
+        # Map of function names to their validator methods
+        validators = {
+            'get_idx_mcap_data_1m': self.validate_rpc_get_idx_mcap_data_1m,
+            'get_indices_price_changes': self.validate_rpc_get_indices_price_changes,
+            'get_top_mcap_gainers': self.validate_rpc_get_top_mcap_gainers,
+            'get_top_mcap_losers': self.validate_rpc_get_top_mcap_losers,
+            'get_top_gainers': self.validate_rpc_get_top_gainers,
+            'get_top_losers': self.validate_rpc_get_top_losers,
+            'get_peers_and_idx_valuation_summary': self.validate_rpc_get_peers_and_idx_valuation_summary,
+            'get_idx_peers_growth_and_forecasts': self.validate_rpc_get_idx_peers_growth_and_forecasts,
+            'get_news_per_dimensions_by_ticker_subsector': self.validate_rpc_get_news_per_dimensions_by_ticker_subsector,
+            'get_idx_yield_ttm': self.validate_rpc_get_idx_yield_ttm,
+            'get_companies_loan_quality': self.validate_rpc_get_companies_loan_quality,
+            'get_idx_resilience': self.validate_rpc_get_idx_resilience,
+            'get_companies_state_owned': self.validate_rpc_get_companies_state_owned,
+            'get_upcoming_dividends_and_splits': self.validate_rpc_get_upcoming_dividends_and_splits,
+            'get_idx_most_traded': self.validate_rpc_get_idx_most_traded,
+            'get_idx_volume': self.validate_rpc_get_idx_volume
+        }
+        
+        try:
+            if function_name:
+                # Validate single function
+                if function_name not in validators:
+                    return {
+                        "validation_type": "rpc_functions",
+                        "validation_timestamp": datetime.now().isoformat(),
+                        "total_functions_checked": 0,
+                        "anomalies_count": 1,
+                        "anomalies": [{
+                            "type": "invalid_function_name",
+                            "message": f"Invalid function name: {function_name}. Valid options: {', '.join(validators.keys())}",
+                            "severity": "error"
+                        }],
+                        "status": "error"
+                    }
+                
+                print(f"🔍 Validating single RPC function: {function_name}")
+                result = await validators[function_name]()
+                anomalies.extend(result.get("anomalies", []))
+                total_checked = 1
+            else:
+                # Validate all functions
+                print(f"🔍 Validating all {len(validators)} RPC functions")
+                for func_name, validator_method in validators.items():
+                    print(f"  ▶ {func_name}")
+                    try:
+                        result = await validator_method()
+                        anomalies.extend(result.get("anomalies", []))
+                    except Exception as e:
+                        print(f"  ❌ Error in {func_name}: {str(e)}")
+                        anomalies.append({
+                            "type": "validator_error",
+                            "rpc_function": func_name,
+                            "message": f"Error in validator: {str(e)}",
+                            "severity": "error"
+                        })
+                total_checked = len(validators)
+            
+            print(f"✅ RPC validation complete. Found {len(anomalies)} anomalies")
+            
+        except Exception as e:
+            anomalies.append({
+                "type": "validation_error",
+                "message": f"Error validating RPC functions: {str(e)}",
+                "severity": "error"
+            })
+        
+        return {
+            "validation_type": "rpc_functions",
+            "validation_timestamp": datetime.now().isoformat(),
+            "total_functions_checked": total_checked,
+            "anomalies_count": len(anomalies),
+            "anomalies": anomalies,
+            "status": "error" if any(a.get("severity") == "error" for a in anomalies) else "success"
+        }
