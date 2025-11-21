@@ -419,7 +419,7 @@ async def get_dashboard_stats():
             "idx_daily_data", "idx_daily_data_completeness", "idx_dividend", "idx_all_time_price", 
             "idx_filings", "idx_stock_split", "idx_news", "sgx_company_report", "sgx_manual_input", 
             "idx_company_profile", "idx_sector_reports",
-            "idx_financial_sheets_annual", "idx_financial_sheets_quarterly"
+            "idx_financial_sheets_annual", "idx_financial_sheets_quarterly", "sgx_filings"
         ]
         total_tables = len(all_tables)
         
