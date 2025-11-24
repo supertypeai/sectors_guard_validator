@@ -14,8 +14,8 @@ on:
     - cron: '0 4 1 * *'
     # All-time price - Daily at 5 AM UTC
     - cron: '0 5 * * *'
-    # Filings - Daily at 6 AM UTC
-    - cron: '10 9 * * *'
+    # Filings - Daily at 9.15 AM UTC
+    - cron: '40 16 * * *'
     # Stock split - Monthly on the 1st at 7 AM UTC
     - cron: '0 7 1 * *'
     # SGX company report - Monthly on the 16th at 07:00 UTC
@@ -168,8 +168,8 @@ jobs:
           elif [ "${{ github.event.schedule }}" = "0 5 * * *" ]; then
             validation_tables=idx_all_time_price
             
-          # Filings - Daily at 6 AM UTC
-          elif [ "${{ github.event.schedule }}" = "10 9 * * *" ]; then
+          # Filings - Daily at 9:15 AM UTC
+          elif [ "${{ github.event.schedule }}" = "40 16 * * *" ]; then
             validation_tables=idx_filings
             
           # Stock split - Monthly on 1st at 7 AM UTC
@@ -206,11 +206,13 @@ jobs:
           echo "Debug: Determined tables = $validation_tables"
         fi
         
-        # Fallback if nothing determined
+        # Set output - either determined tables or 'none' as fallback
         if [ -z "$validation_tables" ]; then
           validation_tables=none
-          echo "validation_tables=$validation_tables" >> $GITHUB_OUTPUT
         fi
+        
+        echo "validation_tables=$validation_tables" >> $GITHUB_OUTPUT
+        echo "Final output: validation_tables=$validation_tables"
 
   data-validation:
     needs: determine-validation-type
