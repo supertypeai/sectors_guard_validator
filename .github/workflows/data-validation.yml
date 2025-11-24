@@ -14,8 +14,8 @@ on:
     - cron: '0 4 1 * *'
     # All-time price - Daily at 5 AM UTC
     - cron: '0 5 * * *'
-    # Filings - Weekly every Monday at 6 AM UTC
-    - cron: '0 6 * * 1'
+    # Filings - Daily at 6 AM UTC
+    - cron: '10 9 * * *'
     # Stock split - Monthly on the 1st at 7 AM UTC
     - cron: '0 7 1 * *'
     # SGX company report - Monthly on the 16th at 07:00 UTC
@@ -73,6 +73,9 @@ jobs:
         day=$(date +%d)
         weekday=$(date +%u)  # 1=Monday, 7=Sunday
         validation_tables=""
+        
+        echo "Debug: Event name = ${{ github.event_name }}"
+        echo "Debug: Month = $month, Day = $day, Weekday = $weekday"
         
         # Manual trigger
         if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
@@ -139,82 +142,68 @@ jobs:
               ;;
           esac
         else
-          # Scheduled trigger - determine based on schedule
-          hour=$(date +%H)
-          case $hour in
-            0)  # 12 AM - Daily completeness/coverage for idx_daily_data (every day)
-              validation_tables=idx_daily_data_completeness
-              echo "validation_tables=$validation_tables" >> $GITHUB_OUTPUT
-              ;;
-            2)  # 2 AM - Annual (Mar, Apr, Jun on the 16th)
-              if [ "$day" = "16" ] && ([ "$month" = "03" ] || [ "$month" = "04" ] || [ "$month" = "06" ]); then
-                validation_tables=idx_combine_financials_annual
-                echo "validation_tables=$validation_tables" >> $GITHUB_OUTPUT
-              fi
-              ;;
-            3)  # 3 AM - Quarterly (Monthly on the 1st)
-              if [ "$day" = "01" ]; then
-                validation_tables=idx_combine_financials_quarterly
-                echo "validation_tables=$validation_tables" >> $GITHUB_OUTPUT
-              fi
-              ;;
-            1)  # 1 AM - Daily (Mondays)
-              if [ "$weekday" = "1" ]; then
-                validation_tables=idx_daily_data
-                echo "validation_tables=$validation_tables" >> $GITHUB_OUTPUT
-              fi
-              ;;
-            4)  # 4 AM - Dividend (Monthly on the 1st)
-              if [ "$day" = "01" ]; then
-                validation_tables=idx_dividend
-                echo "validation_tables=$validation_tables" >> $GITHUB_OUTPUT
-              fi
-              ;;
-            5)  # 5 AM - All-time price (Daily)
-              validation_tables=idx_all_time_price
-              echo "validation_tables=$validation_tables" >> $GITHUB_OUTPUT
-              ;;
-            6)  # 6 AM - Filings (Weekly on Mondays) & SGX Filings (Weekdays)
-              validation_tables="sgx_filings"
-              if [ "$weekday" = "1" ]; then
-                validation_tables="idx_filings,${validation_tables}"
-              fi
-              echo "validation_tables=$validation_tables" >> $GITHUB_OUTPUT
-              ;;
-            7)  # 7 AM - Stock split (Monthly on the 1st) or SGX company report (Monthly on the 16th @ 14:00 WIB)
-              if [ "$day" = "01" ]; then
-                validation_tables=idx_stock_split
-                echo "validation_tables=$validation_tables" >> $GITHUB_OUTPUT
-              elif [ "$day" = "16" ]; then
-                validation_tables=sgx_company_report
-                echo "validation_tables=$validation_tables" >> $GITHUB_OUTPUT
-              fi
-              ;;
-            8)  # 8 AM - Index daily data (Monthly on the 1st)
-              if [ "$day" = "01" ]; then
-                validation_tables=index_daily_data
-                echo "validation_tables=$validation_tables" >> $GITHUB_OUTPUT
-              fi
-              ;;
-            9)  # 9 AM - News (Monthly on the 1st)
-              if [ "$day" = "01" ]; then
-                validation_tables=idx_news
-                echo "validation_tables=$validation_tables" >> $GITHUB_OUTPUT
-              fi
-              ;;
-            10) # 10 AM - SGX manual input (Every 6 months: Jan & Jul on the 1st)
-              if [ "$day" = "01" ] && ([ "$month" = "01" ] || [ "$month" = "07" ]); then
-                validation_tables=sgx_manual_input
-                echo "validation_tables=$validation_tables" >> $GITHUB_OUTPUT
-              fi
-              ;;
-            11) # 11 AM - Company profile (Monthly on the 29th)
-              if [ "$day" = "29" ]; then
-                validation_tables=idx_company_profile
-                echo "validation_tables=$validation_tables" >> $GITHUB_OUTPUT
-              fi
-              ;;
-          esac
+          # Scheduled trigger - determine based on cron schedule
+          
+          # Daily completeness - runs daily at 12 AM UTC
+          if [ "${{ github.event.schedule }}" = "0 0 * * *" ]; then
+            validation_tables=idx_daily_data_completeness
+            
+          # Annual financials - 3x a year (Mar, Apr, Jun) on 16th at 2 AM UTC
+          elif [ "${{ github.event.schedule }}" = "0 2 16 3,4,6 *" ]; then
+            validation_tables=idx_combine_financials_annual
+            
+          # Quarterly financials - Monthly on 1st at 3 AM UTC
+          elif [ "${{ github.event.schedule }}" = "0 3 1 * *" ]; then
+            validation_tables=idx_combine_financials_quarterly
+            
+          # Daily data - Weekly every Monday at 1 AM UTC
+          elif [ "${{ github.event.schedule }}" = "0 1 * * 1" ]; then
+            validation_tables=idx_daily_data
+            
+          # Dividend - Monthly on 1st at 4 AM UTC
+          elif [ "${{ github.event.schedule }}" = "0 4 1 * *" ]; then
+            validation_tables=idx_dividend
+            
+          # All-time price - Daily at 5 AM UTC
+          elif [ "${{ github.event.schedule }}" = "0 5 * * *" ]; then
+            validation_tables=idx_all_time_price
+            
+          # Filings - Daily at 6 AM UTC
+          elif [ "${{ github.event.schedule }}" = "10 9 * * *" ]; then
+            validation_tables=idx_filings
+            
+          # Stock split - Monthly on 1st at 7 AM UTC
+          elif [ "${{ github.event.schedule }}" = "0 7 1 * *" ]; then
+            validation_tables=idx_stock_split
+            
+          # SGX company report - Monthly on 16th at 7 AM UTC
+          elif [ "${{ github.event.schedule }}" = "0 7 16 * *" ]; then
+            validation_tables=sgx_company_report
+            
+          # Index daily data - Monthly on 1st at 8 AM UTC
+          elif [ "${{ github.event.schedule }}" = "0 8 1 * *" ]; then
+            validation_tables=index_daily_data
+            
+          # News - Monthly on 1st at 9 AM UTC
+          elif [ "${{ github.event.schedule }}" = "0 9 1 * *" ]; then
+            validation_tables=idx_news
+            
+          # SGX manual input - Every 6 months (Jan & Jul) on 1st at 10 AM UTC
+          elif [ "${{ github.event.schedule }}" = "0 10 1 1,7 *" ]; then
+            validation_tables=sgx_manual_input
+            
+          # Company profile - Monthly on 29th at 11 AM UTC
+          elif [ "${{ github.event.schedule }}" = "0 11 29 * *" ]; then
+            validation_tables=idx_company_profile
+            
+          # SGX Filings - Weekdays (Mon-Fri) at 6 AM UTC
+          elif [ "${{ github.event.schedule }}" = "0 6 * * 1-5" ]; then
+            validation_tables=sgx_filings
+            
+          fi
+          
+          echo "Debug: Schedule = ${{ github.event.schedule }}"
+          echo "Debug: Determined tables = $validation_tables"
         fi
         
         # Fallback if nothing determined
