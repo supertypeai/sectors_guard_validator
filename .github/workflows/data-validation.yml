@@ -28,6 +28,9 @@ on:
     - cron: '0 10 1 1,7 *'
     # Company profile - Monthly on the 29th at 11 AM UTC
     - cron: '0 11 29 * *'
+    # SGX Filings - Weekdays (Mon-Fri) at 6 AM UTC
+    - cron: '0 6 * * 1-5' 
+
   workflow_dispatch:
     inputs:
       validation_type:
@@ -50,6 +53,7 @@ on:
           - 'sgx_company_report'
           - 'sgx_manual_input'
           - 'company_profile'
+          - 'sgx_filings'
 
 env:
   PYTHON_VERSION: '3.11'
@@ -125,8 +129,12 @@ jobs:
               validation_tables=idx_company_profile
               echo "validation_tables=$validation_tables" >> $GITHUB_OUTPUT
               ;;
+            "sgx_filings")
+              validation_tables=sgx_filings
+              echo "validation_tables=$validation_tables" >> $GITHUB_OUTPUT
+              ;;
             "all")
-              validation_tables=idx_combine_financials_annual,idx_combine_financials_quarterly,idx_daily_data,idx_daily_data_completeness,index_daily_data,idx_dividend,idx_all_time_price,idx_filings,idx_stock_split,idx_news,sgx_company_report,sgx_manual_input,idx_company_profile
+              validation_tables=idx_combine_financials_annual,idx_combine_financials_quarterly,idx_daily_data,idx_daily_data_completeness,index_daily_data,idx_dividend,idx_all_time_price,idx_filings,idx_stock_split,idx_news,sgx_company_report,sgx_manual_input,idx_company_profile,sgx_filings
               echo "validation_tables=$validation_tables" >> $GITHUB_OUTPUT
               ;;
           esac
@@ -166,11 +174,12 @@ jobs:
               validation_tables=idx_all_time_price
               echo "validation_tables=$validation_tables" >> $GITHUB_OUTPUT
               ;;
-            6)  # 6 AM - Filings (Weekly on Mondays)
+            6)  # 6 AM - Filings (Weekly on Mondays) & SGX Filings (Weekdays)
+              validation_tables="sgx_filings"
               if [ "$weekday" = "1" ]; then
-                validation_tables=idx_filings
-                echo "validation_tables=$validation_tables" >> $GITHUB_OUTPUT
+                validation_tables="idx_filings,${validation_tables}"
               fi
+              echo "validation_tables=$validation_tables" >> $GITHUB_OUTPUT
               ;;
             7)  # 7 AM - Stock split (Monthly on the 1st) or SGX company report (Monthly on the 16th @ 14:00 WIB)
               if [ "$day" = "01" ]; then
