@@ -15,7 +15,7 @@ on:
     # All-time price - Daily at 5 AM UTC
     - cron: '0 5 * * *'
     # Filings - Daily at 9.15 AM UTC
-    - cron: '40 16 * * *'
+    - cron: '15 9 * * *'
     # Stock split - Monthly on the 1st at 7 AM UTC
     - cron: '0 7 1 * *'
     # SGX company report - Monthly on the 16th at 07:00 UTC
@@ -169,7 +169,7 @@ jobs:
             validation_tables=idx_all_time_price
             
           # Filings - Daily at 9:15 AM UTC
-          elif [ "${{ github.event.schedule }}" = "40 16 * * *" ]; then
+          elif [ "${{ github.event.schedule }}" = "15 9 * * *" ]; then
             validation_tables=idx_filings
             
           # Stock split - Monthly on 1st at 7 AM UTC
