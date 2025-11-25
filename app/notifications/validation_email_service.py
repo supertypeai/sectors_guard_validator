@@ -55,8 +55,8 @@ class ValidationEmailService:
         self.active_tasks = {}
     
     async def send_validation_alert(self, table_name: str, validation_results: Dict[str, Any], 
-                                  recipient_emails: List[str] = None) -> bool:
-        """Send validation alert email with rich HTML template"""
+                                  recipient_emails: List[str] = None, json_file_path: str = None) -> bool:
+        """Send validation alert email with rich HTML template and JSON attachment"""
         try:
             if not recipient_emails:
                 recipient_emails = await self._get_email_recipients(table_name)
@@ -70,7 +70,7 @@ class ValidationEmailService:
             subject = f"Sectors Guard Alert: {table_name} - {anomalies_count} validation issues detected"
             
             for recipient_email in recipient_emails:
-                success = await self._send_validation_email(recipient_email, table_name, validation_results)
+                success = await self._send_validation_email(recipient_email, table_name, validation_results, json_file_path)
                 if success:
                     logger.info(f"Validation alert sent successfully to {recipient_email}")
                 else:
@@ -109,13 +109,13 @@ class ValidationEmailService:
             return False
     
     async def _send_validation_email(self, recipient_email: str, table_name: str, 
-                                   validation_results: Dict[str, Any]) -> bool:
+                                   validation_results: Dict[str, Any], json_file_path: str = None) -> bool:
         """Send validation email using AWS SES first, then SMTP fallback if SES fails."""
         try:
-            return await self._send_validation_email_ses(recipient_email, table_name, validation_results)
+            return await self._send_validation_email_ses(recipient_email, table_name, validation_results, json_file_path)
         except Exception as ses_err:
             logger.warning(f"AWS SES failed for {recipient_email}: {ses_err}. Trying SMTP fallback...")
-            return await self._send_validation_email_smtp_fallback(recipient_email, table_name, validation_results)
+            return await self._send_validation_email_smtp_fallback(recipient_email, table_name, validation_results, json_file_path)
     
     async def _send_summary_email(self, recipient_email: str, summary_data: Dict[str, Any]) -> bool:
         """Send daily summary email using AWS SES first, then SMTP fallback if SES fails."""
@@ -126,8 +126,10 @@ class ValidationEmailService:
             return await self._send_summary_email_smtp_fallback(recipient_email, summary_data)
 
     async def _send_validation_email_ses(self, recipient_email: str, table_name: str, 
-                                       validation_results: Dict[str, Any]) -> bool:
+                                       validation_results: Dict[str, Any], json_file_path: str = None) -> bool:
         """Send validation email using AWS SES via boto3."""
+        import os
+        
         # Validate AWS settings
         if not all([self.aws_access_key_id, self.aws_secret_access_key, self.aws_region]):
             raise Exception("AWS SES credentials not configured")
@@ -164,6 +166,18 @@ class ValidationEmailService:
         html_content = self._build_validation_email_html(table_name, validation_results)
         html_body = MIMEText(html_content, 'html')
         msg.attach(html_body)
+
+        # Attach JSON file if provided
+        if json_file_path and os.path.exists(json_file_path):
+            try:
+                with open(json_file_path, 'rb') as f:
+                    json_attachment = MIMEApplication(f.read(), _subtype='json')
+                    json_attachment.add_header('Content-Disposition', 'attachment', 
+                                             filename=os.path.basename(json_file_path))
+                    msg.attach(json_attachment)
+                    logger.info(f"Attached JSON file: {os.path.basename(json_file_path)}")
+            except Exception as attach_error:
+                logger.warning(f"Failed to attach JSON file: {attach_error}")
 
         # Send raw email
         try:
@@ -826,9 +840,10 @@ class ValidationEmailService:
         return issues_html
 
     async def _send_validation_email_smtp_fallback(self, recipient_email: str, table_name: str, 
-                                                  validation_results: Dict[str, Any]) -> bool:
+                                                  validation_results: Dict[str, Any], json_file_path: str = None) -> bool:
         """Fallback method using SMTP"""
         import smtplib
+        import os
         from email.mime.text import MIMEText
         from email.mime.multipart import MIMEMultipart
         
@@ -850,6 +865,18 @@ class ValidationEmailService:
             html_content = self._build_validation_email_html(table_name, validation_results)
             html_body = MIMEText(html_content, 'html')
             msg.attach(html_body)
+            
+            # Attach JSON file if provided
+            if json_file_path and os.path.exists(json_file_path):
+                try:
+                    with open(json_file_path, 'rb') as f:
+                        json_attachment = MIMEApplication(f.read(), _subtype='json')
+                        json_attachment.add_header('Content-Disposition', 'attachment', 
+                                                 filename=os.path.basename(json_file_path))
+                        msg.attach(json_attachment)
+                        logger.info(f"Attached JSON file: {os.path.basename(json_file_path)}")
+                except Exception as attach_error:
+                    logger.warning(f"Failed to attach JSON file: {attach_error}")
             
             # Send email
             with smtplib.SMTP(self.smtp_server, self.smtp_port) as server:

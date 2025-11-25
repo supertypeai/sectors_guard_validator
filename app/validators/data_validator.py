@@ -73,6 +73,9 @@ class DataValidator:
             # Store results
             await self._store_validation_results(results)
             
+            # Create JSON file with results
+            results["json_file_path"] = self._create_validation_json_file(results)
+            
             return results
             
         except Exception as e:
@@ -330,6 +333,42 @@ class DataValidator:
             })
         
         return {"anomalies": anomalies}
+    
+    def _create_validation_json_file(self, results: Dict[str, Any]) -> str:
+        """Create JSON file for validation results with naming format [table_name]_[timestamp]_filter_[date_filter].json
+        
+        Returns:
+            str: Absolute path to the created JSON file
+        """
+        import os
+        from datetime import datetime
+        
+        # Get results folder path
+        results_folder = os.path.join(os.path.dirname(os.path.dirname(__file__)), "results")
+        os.makedirs(results_folder, exist_ok=True)
+        
+        # Generate timestamp
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        # Generate filename
+        table_name = results.get("table_name", "unknown")
+        date_filter = results.get("date_filter")
+        
+        if date_filter and (date_filter.get("start_date") or date_filter.get("end_date")):
+            start = date_filter.get("start_date", "none").replace("-", "")
+            end = date_filter.get("end_date", "none").replace("-", "")
+            filename = f"{table_name}_{timestamp}_filter_{start}_to_{end}.json"
+        else:
+            filename = f"{table_name}_{timestamp}_filter_none.json"
+        
+        filepath = os.path.join(results_folder, filename)
+        
+        # Write JSON file
+        with open(filepath, 'w', encoding='utf-8') as f:
+            json.dump(results, f, indent=2, ensure_ascii=False, default=str)
+        
+        print(f"Created validation JSON file: {filename}")
+        return filepath
     
     async def _store_validation_results(self, results: Dict[str, Any]) -> None:
         """Store validation results in database with timeout handling"""

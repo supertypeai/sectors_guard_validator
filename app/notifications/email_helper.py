@@ -34,6 +34,9 @@ class EmailHelper:
         """
         if not send_email:
             return True
+        
+        import os
+        json_file_path = validation_results.get('json_file_path')
             
         try:
             # Check if there are any error-level issues that warrant notification
@@ -49,21 +52,43 @@ class EmailHelper:
             if filtered_anomalies_count > 0:
                 success = await self.email_service.send_validation_alert(
                     table_name=table_name,
-                    validation_results=validation_results
+                    validation_results=validation_results,
+                    json_file_path=json_file_path
                 )
                 
                 if success:
                     logger.info(f"Validation alert sent for table {table_name} with {filtered_anomalies_count} actionable issues")
+                    # Delete JSON file after successful email send
+                    if json_file_path and os.path.exists(json_file_path):
+                        try:
+                            os.remove(json_file_path)
+                            logger.info(f"Deleted validation JSON file: {json_file_path}")
+                        except Exception as cleanup_error:
+                            logger.warning(f"Failed to delete JSON file {json_file_path}: {cleanup_error}")
                 else:
                     logger.error(f"Failed to send validation alert for table {table_name}")
                 
                 return success
             else:
                 logger.info(f"No actionable issues detected for table {table_name} (info notifications filtered), skipping email notification")
+                # Delete JSON file even if no email sent (no errors to report)
+                if json_file_path and os.path.exists(json_file_path):
+                    try:
+                        os.remove(json_file_path)
+                        logger.info(f"Deleted validation JSON file (no errors to report): {json_file_path}")
+                    except Exception as cleanup_error:
+                        logger.warning(f"Failed to delete JSON file {json_file_path}: {cleanup_error}")
                 return True
                 
         except Exception as e:
             logger.error(f"Error in notify_validation_complete for {table_name}: {e}")
+            # Cleanup JSON file on error
+            if json_file_path and os.path.exists(json_file_path):
+                try:
+                    os.remove(json_file_path)
+                    logger.info(f"Deleted validation JSON file after error: {json_file_path}")
+                except Exception as cleanup_error:
+                    logger.warning(f"Failed to delete JSON file {json_file_path}: {cleanup_error}")
             return False
     
     async def send_daily_summary(self, validation_summaries: List[Dict[str, Any]]) -> bool:

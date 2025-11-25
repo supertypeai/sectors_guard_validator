@@ -99,6 +99,9 @@ class IDXFinancialValidator(DataValidator):
             results["total_anomalies_found"] = len(all_anomalies)
             results["errors_stored"] = len(error_anomalies)
             
+            # Create JSON file with full results (including all anomalies)
+            results["json_file_path"] = self._create_validation_json_file(results)
+            
             return results
         except Exception as e:
             return {
@@ -2659,9 +2662,9 @@ class IDXFinancialValidator(DataValidator):
             response = self.supabase.rpc('get_indices_price_changes', {}).execute()
             if response.data:
                 df = pd.DataFrame(response.data)
-                if 'date' in df.columns:
-                    df['date'] = pd.to_datetime(df['date']).dt.date
-                    max_date = df['date'].max()
+                if 'latest_date' in df.columns:
+                    df['latest_date'] = pd.to_datetime(df['latest_date']).dt.date
+                    max_date = df['latest_date'].max()
                     if max_date != latest_daily_date:
                         anomalies.append({
                             "type": "date_mismatch",
@@ -2708,7 +2711,7 @@ class IDXFinancialValidator(DataValidator):
                 })
                 return {"anomalies": anomalies}
             
-            response = self.supabase.rpc('get_top_mcap_gainers', {'p_days': 1}).execute()
+            response = self.supabase.rpc('get_top_mcap_gainers', {'n': 1}).execute()
             if response.data:
                 df = pd.DataFrame(response.data)
                 date_col = None
@@ -2766,7 +2769,7 @@ class IDXFinancialValidator(DataValidator):
                 })
                 return {"anomalies": anomalies}
             
-            response = self.supabase.rpc('get_top_mcap_losers', {'p_days': 1}).execute()
+            response = self.supabase.rpc('get_top_mcap_losers', {"n":'5', "allow_lowcaps":'false'}).execute()
             if response.data:
                 df = pd.DataFrame(response.data)
                 date_col = None
@@ -3021,9 +3024,8 @@ class IDXFinancialValidator(DataValidator):
             response = self.supabase.rpc('get_companies_loan_quality', {}).execute()
             if response.data:
                 df = pd.DataFrame(response.data)
-                if 'date' in df.columns and 'symbol' in df.columns:
-                    df['date'] = pd.to_datetime(df['date'])
-                    df['year'] = df['date'].dt.year
+                if 'year' in df.columns and 'symbol' in df.columns:
+                    df['year'] = pd.to_numeric(df['year'], errors='coerce')
                     
                     # Group by symbol and check latest year
                     for symbol, group in df.groupby('symbol'):
