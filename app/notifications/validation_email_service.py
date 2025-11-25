@@ -685,7 +685,7 @@ class ValidationEmailService:
             <div style="background-color: #fefce8; border: 1px solid #fde68a; border-left: 5px solid #f59e0b; padding: 20px; margin: 20px 0; border-radius: 12px; text-align: center;">
                 <p class="inter-font" style="color: #92400e; margin: 0; font-size: 15px; font-weight: 500;">
                     <strong>{len(filtered_anomalies) - 8} additional critical issues</strong> detected.<br>
-                    View the complete analysis in your dashboard for full details.
+                    View the complete analysis in the file in attachment for full details.
                 </p>
             </div>
             """

@@ -80,6 +80,37 @@ class IDXFinancialValidator(DataValidator):
                         "note": "Validation limited to top 50 companies by market capitalization"
                     }
             
+            # Sort anomalies by date (checking multiple possible date field names)
+            def sort_key(anomaly):
+                from datetime import datetime
+                # Try different possible date field names
+                date_fields = ['date', 'filing_date', 'ex_date', 'payment_date', 'timestamp', 'years_affected', 'date_1']
+                
+                for field in date_fields:
+                    date_val = anomaly.get(field)
+                    if date_val:
+                        try:
+                            # Handle different date formats
+                            if isinstance(date_val, str):
+                                # Try parsing ISO format
+                                return datetime.fromisoformat(date_val.replace('Z', '+00:00'))
+                            elif isinstance(date_val, (datetime, pd.Timestamp)):
+                                return date_val
+                            elif isinstance(date_val, list):
+                                # For years_affected, use the first year
+                                if date_val and len(date_val) > 0:
+                                    return datetime(int(date_val[0]), 1, 1)
+                        except:
+                            continue
+                
+                # If no valid date found, return a very old date to put at beginning
+                return datetime(2021, 1, 1)
+            
+            try:
+                results["anomalies"].sort(key=sort_key)
+            except Exception as sort_err:
+                print(f"⚠️  [Validator] Failed to sort anomalies by date: {sort_err}")
+            
             # Filter anomalies: only keep 'error' severity for database storage
             all_anomalies = results["anomalies"].copy()  # Keep all for return
             error_anomalies = [a for a in results["anomalies"] if a.get("severity") == "error"]

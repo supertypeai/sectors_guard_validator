@@ -379,7 +379,7 @@ class DataValidator:
                 "status": results["status"],
                 "total_rows": results.get("total_rows", 0),
                 "anomalies_count": results["anomalies_count"],
-                "anomalies": results.get("anomalies", []),
+                "anomalies": results.get("anomalies", []).copy(),  # Make a copy
                 "validations_performed": results.get("validations_performed", []),
                 "validation_timestamp": results["validation_timestamp"]
             }
@@ -390,14 +390,15 @@ class DataValidator:
             print(f"   - Anomalies count: {validation_data['anomalies_count']}")
             print(f"   - Anomalies data size: {anomalies_size} chars")
             
-            # If anomalies data is too large (>50KB), truncate it
+            # If anomalies data is too large (>50KB), truncate it for db only
             if anomalies_size > 50000:
-                print(f"⚠️  Anomalies data too large ({anomalies_size} chars), truncating...")
+                print(f"⚠️  Anomalies data too large ({anomalies_size} chars), truncating for database...")
+                original_count = len(validation_data["anomalies"])
                 # Keep only first 20 anomalies
                 validation_data["anomalies"] = validation_data["anomalies"][:20]
                 validation_data["anomalies"].append({
                     "type": "truncated_results",
-                    "message": f"Results truncated - showing first 20 out of {validation_data['anomalies_count']} anomalies",
+                    "message": f"Results truncated - showing first 20 out of {original_count} anomalies",
                     "severity": "info"
                 })
                 print(f"   - Truncated to {len(json.dumps(validation_data['anomalies']))} chars")
