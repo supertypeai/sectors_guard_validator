@@ -84,7 +84,7 @@ class IDXFinancialValidator(DataValidator):
             def sort_key(anomaly):
                 from datetime import datetime
                 # Try different possible date field names
-                date_fields = ['date', 'filing_date', 'ex_date', 'payment_date', 'timestamp', 'years_affected', 'date_1']
+                date_fields = ['date', 'filing_date', 'ex_date', 'payment_date', 'timestamp', 'years_affected', 'date_1', 'periods_affected', 'latest_close_date', 'year', 'first_split_date', 'financial_year', 'transaction_date', 'actual_date']
                 
                 for field in date_fields:
                     date_val = anomaly.get(field)
@@ -97,9 +97,12 @@ class IDXFinancialValidator(DataValidator):
                             elif isinstance(date_val, (datetime, pd.Timestamp)):
                                 return date_val
                             elif isinstance(date_val, list):
-                                # For years_affected, use the first year
+                                # For years_affected or periods_affected, use the first year
                                 if date_val and len(date_val) > 0:
                                     return datetime(int(date_val[0]), 1, 1)
+                            elif isinstance(date_val, (int, float)):
+                                # For year or financial_year, treat as year
+                                return datetime(int(date_val), 1, 1)
                         except:
                             continue
                 
@@ -1535,7 +1538,8 @@ class IDXFinancialValidator(DataValidator):
                             "severity": "error"
                         })
                     else:
-                        if latest_date != today_sg:
+                        yesterday = today_sg - timedelta(days=1)
+                        if latest_date != today_sg or latest_date != yesterday:
                             anomalies.append({
                                 "type": "staleness",
                                 "metric": "close.latest_date",
@@ -1543,7 +1547,7 @@ class IDXFinancialValidator(DataValidator):
                                 "symbol": sym,
                                 "latest_close_date": latest_date.isoformat(),
                                 "today_sg": today_sg.isoformat(),
-                                "severity": "warning"
+                                "severity": "error"
                             })
 
             # 3) historical_financials percent-change checks
