@@ -141,12 +141,6 @@ async def get_tables():
                 "description": "SGX filings data - Duplicate and data completeness validation",
                 "validation_type": "SGX Filings Validation",
                 "rules": "1. Duplicate checks on composite key (url, shareholder_name, transaction_date, shares_before, shares_after); 2. Missing transaction details check (number_of_stock, value, price_per_share)"
-            },
-            {
-                "name": "rpc_functions",
-                "description": "Supabase RPC functions validation - Date freshness and data availability checks",
-                "validation_type": "RPC Functions Validation",
-                "rules": "16 functions: get_idx_mcap_data_1m, get_indices_price_changes, get_top_mcap_gainers/losers, get_top_gainers/losers, get_peers_and_idx_valuation_summary, get_idx_peers_growth_and_forecasts, get_news_per_dimensions_by_ticker_subsector, get_idx_yield_ttm, get_companies_loan_quality, get_idx_resilience, get_companies_state_owned, get_upcoming_dividends_and_splits, get_idx_most_traded, get_idx_volume"
             }
         ]
         
@@ -356,20 +350,24 @@ async def get_validation_results(
     table_name: Optional[str] = Query(None, description="Filter by table name"),
     limit: int = Query(10, ge=1, le=100, description="Number of results to return")
 ):
-    """Get validation results with fallback to local storage"""
+    """Get validation results for regular tables (excludes RPC functions)."""
     try:
         print(f"📊 [API] Getting validation results - table: {table_name}, limit: {limit}")
         
         # Try to get from database first
         supabase = get_supabase_client()
-        query = supabase.table("validation_results").select("*").order("validation_timestamp", desc=True).limit(limit)
+        query = supabase.table("validation_results").select("*")
         
         if table_name:
             query = query.eq("table_name", table_name)
+        else:
+            # Exclude RPC results
+            query = query.not_.like("table_name", "rpc%")
         
+        query = query.order("validation_timestamp", desc=True).limit(limit)
         response = query.execute()
         
-        print(f"🔍 [API] Database query returned {len(response.data) if response.data else 0} results")
+        print(f"🔍 [API] Database query returned {len(response.data) if response.data else 0} results (excluding RPC)")
         
         if response.data:
             return {
@@ -390,6 +388,9 @@ async def get_validation_results(
         validator = DataValidator()
         local_results = validator.get_stored_validation_results()
         
+        # Filter out RPC results
+        local_results = [r for r in local_results if not r.get("table_name", "").startswith("rpc")]
+        
         # Filter by table_name if specified
         if table_name:
             local_results = [r for r in local_results if r.get("table_name") == table_name]
@@ -397,7 +398,7 @@ async def get_validation_results(
         # Apply limit
         local_results = local_results[:limit]
         
-        print(f"📁 [API] Local storage returned {len(local_results)} results")
+        print(f"📁 [API] Local storage returned {len(local_results)} results (excluding RPC)")
         
         return {
             "status": "success", 
@@ -417,6 +418,164 @@ async def get_validation_results(
                 "results": []
             }
         }
+
+@dashboard_router.get("/rpc-results")
+async def get_rpc_validation_results(
+    function_name: Optional[str] = Query(None, description="Filter by RPC function name"),
+    limit: int = Query(10, ge=1, le=100, description="Number of results to return")
+):
+    """Get validation results for RPC functions only"""
+    try:
+        print(f"📊 [API] Getting RPC validation results - function: {function_name}, limit: {limit}")
+        
+        # Try to get from database first
+        supabase = get_supabase_client()
+        query = supabase.table("validation_results").select("*")
+        
+        if function_name:
+            # Filter by specific RPC function (table_name = 'rpc_functions' or 'rpc_{function_name}')
+            query = query.or_(f"table_name.eq.rpc_functions,table_name.eq.rpc_{function_name}")
+        else:
+            # Include only RPC results using LIKE pattern at database level
+            query = query.like("table_name", "rpc%")
+        
+        query = query.order("validation_timestamp", desc=True).limit(limit)
+        response = query.execute()
+        
+        print(f"🔍 [API] Database query returned {len(response.data) if response.data else 0} RPC results")
+        
+        if response.data:
+            return {
+                "status": "success", 
+                "data": {
+                    "results": response.data
+                }, 
+                "source": "database"
+            }
+            
+    except Exception as db_error:
+        print(f"⚠️  Database query failed: {db_error}")
+    
+    # Fallback to local storage
+    try:
+        print("📁 [API] Falling back to local storage for RPC results")
+        from app.validators.data_validator import DataValidator
+        validator = DataValidator()
+        local_results = validator.get_stored_validation_results()
+        
+        # Filter to only include RPC results
+        local_results = [r for r in local_results if r.get("table_name", "").startswith("rpc")]
+        
+        # Filter by function_name if specified
+        if function_name:
+            local_results = [r for r in local_results if r.get("table_name") in ["rpc_functions", f"rpc_{function_name}"]]
+        
+        # Apply limit
+        local_results = local_results[:limit]
+        
+        print(f"📁 [API] Local storage returned {len(local_results)} RPC results")
+        
+        return {
+            "status": "success", 
+            "data": {
+                "results": local_results
+            }, 
+            "source": "local_storage",
+            "message": "Using local storage - database unavailable"
+        }
+        
+    except Exception as local_error:
+        print(f"⚠️  Local storage also failed: {local_error}")
+        return {
+            "status": "error", 
+            "message": "Both database and local storage unavailable",
+            "data": {
+                "results": []
+            }
+        }
+
+@dashboard_router.get("/rpc-results/by-function/{function_name}")
+async def get_rpc_results_by_function(
+    function_name: str,
+    limit: int = Query(5, ge=1, le=100, description="Number of recent results to return")
+):
+    """Get recent validation results for a specific RPC function"""
+    try:
+        print(f"📊 [API] Getting RPC validation results by function - function: {function_name}, limit: {limit}")
+        
+        # Try to get from database first
+        supabase = get_supabase_client()
+        
+        # Query for both rpc_functions (all) and rpc_{function_name} (specific)
+        response = supabase.table("validation_results")\
+            .select("*")\
+            .or_(f"table_name.eq.rpc_functions,table_name.eq.rpc_{function_name}")\
+            .order("validation_timestamp", desc=True)\
+            .limit(limit)\
+            .execute()
+        
+        print(f"🔍 [API] Database query returned {len(response.data) if response.data else 0} results for RPC {function_name}")
+        
+        if response.data:
+            return {
+                "status": "success",
+                "data": {
+                    "function_name": function_name,
+                    "results": response.data,
+                    "count": len(response.data)
+                },
+                "source": "database"
+            }
+        else:
+            return {
+                "status": "success",
+                "data": {
+                    "function_name": function_name,
+                    "results": [],
+                    "count": 0
+                },
+                "source": "database",
+                "message": f"No validation results found for RPC function {function_name}"
+            }
+            
+    except Exception as db_error:
+        print(f"⚠️  Database query failed: {db_error}")
+        
+        # Fallback to local storage
+        try:
+            print("📁 [API] Falling back to local storage")
+            from app.validators.data_validator import DataValidator
+            validator = DataValidator()
+            local_results = validator.get_stored_validation_results()
+            
+            # Filter by RPC function name
+            filtered_results = [r for r in local_results if r.get("table_name") in ["rpc_functions", f"rpc_{function_name}"]]
+            filtered_results = filtered_results[:limit]
+            
+            print(f"📁 [API] Local storage returned {len(filtered_results)} results for RPC {function_name}")
+            
+            return {
+                "status": "success",
+                "data": {
+                    "function_name": function_name,
+                    "results": filtered_results,
+                    "count": len(filtered_results)
+                },
+                "source": "local_storage",
+                "message": "Using local storage - database unavailable"
+            }
+            
+        except Exception as local_error:
+            print(f"⚠️  Local storage also failed: {local_error}")
+            return {
+                "status": "error",
+                "message": "Both database and local storage unavailable",
+                "data": {
+                    "function_name": function_name,
+                    "results": [],
+                    "count": 0
+                }
+            }
 
 @dashboard_router.get("/results/by-table/{table_name}")
 async def get_validation_results_by_table(

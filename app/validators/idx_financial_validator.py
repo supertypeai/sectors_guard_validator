@@ -2733,45 +2733,60 @@ class IDXFinancialValidator(DataValidator):
         return {"anomalies": anomalies}
     
     async def validate_rpc_get_top_mcap_gainers(self) -> Dict[str, Any]:
-        """Validate get_top_mcap_gainers(1) - latest close date = latest date in daily data"""
+        """Validate get_top_mcap_gainers(1) - last_close_price matches latest close price in daily data"""
         anomalies = []
         try:
-            latest_daily_date = await self._get_latest_daily_date()
-            if not latest_daily_date:
-                anomalies.append({
-                    "type": "reference_data_missing",
-                    "rpc_function": "get_top_mcap_gainers(1)",
-                    "message": "Cannot get latest date from idx_daily_data",
-                    "severity": "error"
-                })
-                return {"anomalies": anomalies}
-            
-            response = self.supabase.rpc('get_top_mcap_gainers', {'n': 1}).execute()
+            response = self.supabase.rpc('get_top_mcap_gainers', {'n': '1'}).execute()
             if response.data:
-                df = pd.DataFrame(response.data)
-                date_col = None
-                for col in ['date', 'latest_date', 'close_date']:
-                    if col in df.columns:
-                        date_col = col
-                        break
-                if date_col:
-                    df[date_col] = pd.to_datetime(df[date_col]).dt.date
-                    max_date = df[date_col].max()
-                    yesterday = latest_daily_date - timedelta(days=1)
-                    if max_date < yesterday:
+                # Handle JSONB structure: {"7d": [...], "14d": [...], "30d": [...]}
+                data = response.data
+                if isinstance(data, dict):
+                    # Extract all items from all period keys
+                    all_items = []
+                    for period_key, items in data.items():
+                        if isinstance(items, list):
+                            all_items.extend(items)
+                    if not all_items:
                         anomalies.append({
-                            "type": "date_outdated",
+                            "type": "no_data_returned",
                             "rpc_function": "get_top_mcap_gainers(1)",
-                            "message": f"Latest close date {max_date} is older than yesterday {yesterday} (latest daily data: {latest_daily_date})",
-                            "expected_min_date": str(yesterday),
-                            "actual_date": str(max_date),
+                            "message": "RPC function returned empty JSONB structure",
                             "severity": "error"
                         })
+                        return {"anomalies": anomalies}
+                else:
+                    all_items = data
+                
+                # Validate last_close_price against daily data for each symbol
+                if 'last_close_price' in pd.DataFrame(all_items).columns and 'symbol' in pd.DataFrame(all_items).columns:
+                    symbols_checked = set()
+                    for item in all_items:
+                        symbol = item.get('symbol')
+                        rpc_price = item.get('last_close_price')
+                        
+                        if symbol and rpc_price is not None and symbol not in symbols_checked:
+                            symbols_checked.add(symbol)
+                            # Get latest close price from idx_daily_data for this symbol
+                            daily_response = self.supabase.table('idx_daily_data').select('close', 'date').eq('symbol', symbol).order('date', desc=True).limit(1).execute()
+                            if daily_response.data:
+                                daily_price = daily_response.data[0].get('close')
+                                daily_date = daily_response.data[0].get('date')
+                                if daily_price is not None and float(rpc_price) != float(daily_price):
+                                    anomalies.append({
+                                        "type": "price_mismatch",
+                                        "rpc_function": "get_top_mcap_gainers(1)",
+                                        "symbol": symbol,
+                                        "message": f"last_close_price {rpc_price} does not match latest daily close {daily_price} (date: {daily_date})",
+                                        "rpc_price": rpc_price,
+                                        "daily_price": daily_price,
+                                        "daily_date": str(daily_date),
+                                        "severity": "error"
+                                    })
                 else:
                     anomalies.append({
                         "type": "missing_column",
                         "rpc_function": "get_top_mcap_gainers(1)",
-                        "message": "Response missing date column",
+                        "message": "Response missing last_close_price or symbol column",
                         "severity": "error"
                     })
             else:
@@ -2791,45 +2806,60 @@ class IDXFinancialValidator(DataValidator):
         return {"anomalies": anomalies}
     
     async def validate_rpc_get_top_mcap_losers(self) -> Dict[str, Any]:
-        """Validate get_top_mcap_losers(1) - latest close date = latest date in daily data"""
+        """Validate get_top_mcap_losers(1) - last_close_price matches latest close price in daily data"""
         anomalies = []
         try:
-            latest_daily_date = await self._get_latest_daily_date()
-            if not latest_daily_date:
-                anomalies.append({
-                    "type": "reference_data_missing",
-                    "rpc_function": "get_top_mcap_losers(1)",
-                    "message": "Cannot get latest date from idx_daily_data",
-                    "severity": "error"
-                })
-                return {"anomalies": anomalies}
-            
-            response = self.supabase.rpc('get_top_mcap_losers', {"n":'5', "allow_lowcaps":'false'}).execute()
+            response = self.supabase.rpc('get_top_mcap_losers', {"n":'1'}).execute()
             if response.data:
-                df = pd.DataFrame(response.data)
-                date_col = None
-                for col in ['date', 'latest_date', 'close_date']:
-                    if col in df.columns:
-                        date_col = col
-                        break
-                if date_col:
-                    df[date_col] = pd.to_datetime(df[date_col]).dt.date
-                    max_date = df[date_col].max()
-                    yesterday = latest_daily_date - timedelta(days=1)
-                    if max_date < yesterday:
+                # Handle JSONB structure: {"7d": [...], "14d": [...], "30d": [...]}
+                data = response.data
+                if isinstance(data, dict):
+                    # Extract all items from all period keys
+                    all_items = []
+                    for period_key, items in data.items():
+                        if isinstance(items, list):
+                            all_items.extend(items)
+                    if not all_items:
                         anomalies.append({
-                            "type": "date_outdated",
+                            "type": "no_data_returned",
                             "rpc_function": "get_top_mcap_losers(1)",
-                            "message": f"Latest close date {max_date} is older than yesterday {yesterday} (latest daily data: {latest_daily_date})",
-                            "expected_min_date": str(yesterday),
-                            "actual_date": str(max_date),
+                            "message": "RPC function returned empty JSONB structure",
                             "severity": "error"
                         })
+                        return {"anomalies": anomalies}
+                else:
+                    all_items = data
+                
+                # Validate last_close_price against daily data for each symbol
+                if 'last_close_price' in pd.DataFrame(all_items).columns and 'symbol' in pd.DataFrame(all_items).columns:
+                    symbols_checked = set()
+                    for item in all_items:
+                        symbol = item.get('symbol')
+                        rpc_price = item.get('last_close_price')
+                        
+                        if symbol and rpc_price is not None and symbol not in symbols_checked:
+                            symbols_checked.add(symbol)
+                            # Get latest close price from idx_daily_data for this symbol
+                            daily_response = self.supabase.table('idx_daily_data').select('close', 'date').eq('symbol', symbol).order('date', desc=True).limit(1).execute()
+                            if daily_response.data:
+                                daily_price = daily_response.data[0].get('close')
+                                daily_date = daily_response.data[0].get('date')
+                                if daily_price is not None and float(rpc_price) != float(daily_price):
+                                    anomalies.append({
+                                        "type": "price_mismatch",
+                                        "rpc_function": "get_top_mcap_losers(1)",
+                                        "symbol": symbol,
+                                        "message": f"last_close_price {rpc_price} does not match latest daily close {daily_price} (date: {daily_date})",
+                                        "rpc_price": rpc_price,
+                                        "daily_price": daily_price,
+                                        "daily_date": str(daily_date),
+                                        "severity": "error"
+                                    })
                 else:
                     anomalies.append({
                         "type": "missing_column",
                         "rpc_function": "get_top_mcap_losers(1)",
-                        "message": "Response missing date column",
+                        "message": "Response missing last_close_price or symbol column",
                         "severity": "error"
                     })
             else:
@@ -2862,11 +2892,31 @@ class IDXFinancialValidator(DataValidator):
                 })
                 return {"anomalies": anomalies}
             
-            response = self.supabase.rpc('get_top_gainers', {'p_days': 2, 'p_use_market_cap': True}).execute()
+            response = self.supabase.rpc('get_top_gainers', {"n":'5', "allow_lowcaps":'false'}).execute()
             if response.data:
-                df = pd.DataFrame(response.data)
+                # Handle JSONB structure
+                data = response.data
+                if isinstance(data, dict):
+                    # Extract all items from all period keys
+                    all_items = []
+                    for period_key, items in data.items():
+                        if isinstance(items, list):
+                            all_items.extend(items)
+                    if all_items:
+                        df = pd.DataFrame(all_items)
+                    else:
+                        anomalies.append({
+                            "type": "no_data_returned",
+                            "rpc_function": "get_top_gainers(2,true)",
+                            "message": "RPC function returned empty JSONB structure",
+                            "severity": "error"
+                        })
+                        return {"anomalies": anomalies}
+                else:
+                    df = pd.DataFrame(data)
+                
                 date_col = None
-                for col in ['date', 'latest_date', 'close_date']:
+                for col in ['latest_close_date', 'latest_date', 'close_date']:
                     if col in df.columns:
                         date_col = col
                         break
@@ -2920,11 +2970,31 @@ class IDXFinancialValidator(DataValidator):
                 })
                 return {"anomalies": anomalies}
             
-            response = self.supabase.rpc('get_top_losers', {'p_days': 2, 'p_use_market_cap': True}).execute()
+            response = self.supabase.rpc('get_top_losers', {"n":'5', "allow_lowcaps":'false'}).execute()
             if response.data:
-                df = pd.DataFrame(response.data)
+                # Handle JSONB structure
+                data = response.data
+                if isinstance(data, dict):
+                    # Extract all items from all period keys
+                    all_items = []
+                    for period_key, items in data.items():
+                        if isinstance(items, list):
+                            all_items.extend(items)
+                    if all_items:
+                        df = pd.DataFrame(all_items)
+                    else:
+                        anomalies.append({
+                            "type": "no_data_returned",
+                            "rpc_function": "get_top_losers(2,true)",
+                            "message": "RPC function returned empty JSONB structure",
+                            "severity": "error"
+                        })
+                        return {"anomalies": anomalies}
+                else:
+                    df = pd.DataFrame(data)
+                
                 date_col = None
-                for col in ['date', 'latest_date', 'close_date']:
+                for col in ['latest_close_date', 'latest_date', 'close_date']:
                     if col in df.columns:
                         date_col = col
                         break
