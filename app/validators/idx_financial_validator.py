@@ -1888,6 +1888,8 @@ class IDXFinancialValidator(DataValidator):
         Conditions:
         1. Compare filing price with daily price at the timestamp from idx_daily_data
         2. Detect duplicate transactions: same amount_transaction AND (date difference < 3 days OR same holder_name)
+        3. Transaction type consistency: share_before > share_after must be "sell", share_before < share_after must be "buy"
+        4. Transaction value calculation: price * amount_transaction = transaction_value (within 1% tolerance)
         """
         anomalies = []
         try:
@@ -1907,6 +1909,120 @@ class IDXFinancialValidator(DataValidator):
             data = data.copy()
             data['timestamp'] = pd.to_datetime(data['timestamp'])
             data['date'] = data['timestamp'].dt.date
+
+            # Rule 3: Transaction type consistency check
+            # share_before > share_after -> must be "sell" (cannot be "buy")
+            # share_before < share_after -> must be "buy" (cannot be "sell")
+            type_check_cols = ['holding_before', 'holding_after', 'transaction_type']
+            if all(col in data.columns for col in type_check_cols):
+                for idx, row in data.iterrows():
+                    try:
+                        holding_before = row.get('holding_before')
+                        holding_after = row.get('holding_after')
+                        transaction_type = str(row.get('transaction_type', '')).strip().lower()
+                        
+                        # Skip if any value is missing
+                        if pd.isna(holding_before) or pd.isna(holding_after) or not transaction_type:
+                            continue
+                        
+                        holding_before = float(holding_before)
+                        holding_after = float(holding_after)
+                        holding_diff = holding_after - holding_before
+                        
+                        record_id = self._to_json_serializable(row.get('id', idx))
+                        symbol = str(row.get('symbol', 'N/A'))
+                        holder_name = str(row.get('holder_name', 'N/A'))
+                        filing_date = row['date'].strftime('%Y-%m-%d') if hasattr(row['date'], 'strftime') else str(row['date'])
+                        
+                        # Check: if holdings decreased (sell), transaction_type cannot be "buy"
+                        if holding_diff < 0 and transaction_type == 'buy':
+                            anomalies.append({
+                                "type": "transaction_type_mismatch",
+                                "record_id": record_id,
+                                "symbol": symbol,
+                                "holder_name": holder_name,
+                                "filing_date": filing_date,
+                                "holding_before": int(holding_before),
+                                "holding_after": int(holding_after),
+                                "holding_change": int(holding_diff),
+                                "reported_transaction_type": transaction_type,
+                                "expected_transaction_type": "sell",
+                                "message": f"Transaction type mismatch for {symbol} (ID: {record_id}): Holdings decreased by {abs(int(holding_diff)):,} shares ({int(holding_before):,} → {int(holding_after):,}) but transaction_type is '{transaction_type}' instead of 'sell'",
+                                "severity": "error"
+                            })
+                        
+                        # Check: if holdings increased (buy), transaction_type cannot be "sell"
+                        elif holding_diff > 0 and transaction_type == 'sell':
+                            anomalies.append({
+                                "type": "transaction_type_mismatch",
+                                "record_id": record_id,
+                                "symbol": symbol,
+                                "holder_name": holder_name,
+                                "filing_date": filing_date,
+                                "holding_before": int(holding_before),
+                                "holding_after": int(holding_after),
+                                "holding_change": int(holding_diff),
+                                "reported_transaction_type": transaction_type,
+                                "expected_transaction_type": "buy",
+                                "message": f"Transaction type mismatch for {symbol} (ID: {record_id}): Holdings increased by {int(holding_diff):,} shares ({int(holding_before):,} → {int(holding_after):,}) but transaction_type is '{transaction_type}' instead of 'buy'",
+                                "severity": "error"
+                            })
+                    except (ValueError, TypeError) as e:
+                        print(f"⚠️  Error checking transaction type consistency for row {idx}: {e}")
+                        continue
+
+            # Rule 4: Transaction value calculation check
+            # price * amount_transaction should equal transaction_value (within 1% tolerance)
+            value_check_cols = ['price', 'amount_transaction', 'transaction_value']
+            if all(col in data.columns for col in value_check_cols):
+                for idx, row in data.iterrows():
+                    try:
+                        price = row.get('price')
+                        amount_transaction = row.get('amount_transaction')
+                        transaction_value = row.get('transaction_value')
+                        
+                        # Skip if any value is missing
+                        if pd.isna(price) or pd.isna(amount_transaction) or pd.isna(transaction_value):
+                            continue
+                        
+                        price = float(price)
+                        amount_transaction = float(amount_transaction)
+                        transaction_value = float(transaction_value)
+                        
+                        # Skip if any value is zero (avoid division errors and meaningless checks)
+                        if price == 0 or amount_transaction == 0 or transaction_value == 0:
+                            continue
+                        
+                        expected_value = price * amount_transaction
+                        
+                        # Calculate percentage difference (use larger value as base to handle both directions)
+                        base_value = max(abs(expected_value), abs(transaction_value))
+                        value_diff_pct = abs(expected_value - transaction_value) / base_value * 100
+                        
+                        # Allow 1% tolerance for rounding differences
+                        if value_diff_pct > 1.0:
+                            record_id = self._to_json_serializable(row.get('id', idx))
+                            symbol = str(row.get('symbol', 'N/A'))
+                            holder_name = str(row.get('holder_name', 'N/A'))
+                            filing_date = row['date'].strftime('%Y-%m-%d') if hasattr(row['date'], 'strftime') else str(row['date'])
+                            
+                            anomalies.append({
+                                "type": "transaction_value_mismatch",
+                                "record_id": record_id,
+                                "symbol": symbol,
+                                "holder_name": holder_name,
+                                "filing_date": filing_date,
+                                "price": price,
+                                "amount_transaction": int(amount_transaction),
+                                "reported_transaction_value": transaction_value,
+                                "expected_transaction_value": expected_value,
+                                "difference_pct": round(value_diff_pct, 2),
+                                "message": f"Transaction value mismatch for {symbol} (ID: {record_id}): price ({price:,.2f}) × amount ({int(amount_transaction):,}) = {expected_value:,.2f}, but reported transaction_value is {transaction_value:,.2f} (diff: {value_diff_pct:.2f}%)",
+                                "severity": "error"
+                            })
+                    except (ValueError, TypeError) as e:
+                        print(f"⚠️  Error checking transaction value for row {idx}: {e}")
+                        continue
 
             # Rule 1: Compare filing price with daily price
             for idx, filing in data.iterrows():
