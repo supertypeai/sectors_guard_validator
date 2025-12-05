@@ -1,4 +1,4 @@
-import pandas as pd
+﻿import pandas as pd
 import numpy as np
 from typing import Dict, List, Any, Optional, Tuple
 from datetime import datetime, timedelta
@@ -114,24 +114,24 @@ class IDXFinancialValidator(DataValidator):
             except Exception as sort_err:
                 print(f"⚠️  [Validator] Failed to sort anomalies by date: {sort_err}")
             
-            # Filter anomalies: only keep 'error' severity for database storage
+            # Filter anomalies: only keep 'flagged' severity for database storage
             all_anomalies = results["anomalies"].copy()  # Keep all for return
-            error_anomalies = [a for a in results["anomalies"] if a.get("severity") == "error"]
-            results["anomalies"] = error_anomalies  # Only errors go to database
+            flagged_anomalies = [a for a in results["anomalies"] if a.get("severity") == "flagged"]
+            results["anomalies"] = flagged_anomalies  # Only flagged go to database
             
-            # Update final counts and status based on error anomalies only
-            results["anomalies_count"] = len(error_anomalies)
+            # Update final counts and status based on flagged anomalies only
+            results["anomalies_count"] = len(flagged_anomalies)
             
             if results["anomalies_count"] > 0:
-                results["status"] = "error"
+                results["status"] = "flagged"
             
-            # Store results (only errors)
+            # Store results (only flagged)
             await self._store_validation_results(results)
             
             # Return all anomalies for API response
             results["anomalies"] = all_anomalies
             results["total_anomalies_found"] = len(all_anomalies)
-            results["errors_stored"] = len(error_anomalies)
+            results["flagged_stored"] = len(flagged_anomalies)
             
             # Create JSON file with full results (including all anomalies)
             results["json_file_path"] = self._create_validation_json_file(results)
@@ -369,9 +369,9 @@ class IDXFinancialValidator(DataValidator):
                         diff_pct = abs(diff) / abs(base) * 100.0
                         # Severity grouping per requirement
                         if diff_pct > 11.0:
-                            severity = 'error'
+                            severity = 'flagged'
                         elif diff_pct > 5.0:
-                            severity = 'warning'
+                            severity = 'info'
                         else:
                             severity = 'info'
                         anomalies.append({
@@ -402,7 +402,7 @@ class IDXFinancialValidator(DataValidator):
                         "date": x.loc[idx].get('date').strftime('%Y-%m-%d') if isinstance(x.loc[idx].get('date'), (pd.Timestamp, datetime)) else x.loc[idx].get('date'),
                         "difference": float(diff_val),
                         "difference_pct": (abs(diff_val) / base * 100.0) if base else None,
-                        "severity": "warning"
+                        "severity": "info"
                     })
         # 3. EBT ≈ Earnings + Tax (+ Minorities optional)
         if all(c in x.columns for c in ['earnings_before_tax', 'earnings', 'tax']):
@@ -425,7 +425,7 @@ class IDXFinancialValidator(DataValidator):
                         "date": x.loc[idx].get('date').strftime('%Y-%m-%d') if isinstance(x.loc[idx].get('date'), (pd.Timestamp, datetime)) else x.loc[idx].get('date'),
                         "difference": diff1,
                         "difference_pct": abs(diff1) / base * 100.0,
-                        "severity": "warning"
+                        "severity": "info"
                     })
         # 4. Net cash flow = CFO + CFI + CFF
         if all(c in x.columns for c in ['net_operating_cash_flow','net_investing_cash_flow','net_financing_cash_flow','net_cash_flow']):
@@ -461,7 +461,7 @@ class IDXFinancialValidator(DataValidator):
                         "date": x.loc[idx].get('date').strftime('%Y-%m-%d') if isinstance(x.loc[idx].get('date'), (pd.Timestamp, datetime)) else x.loc[idx].get('date'),
                         "difference": float(diff_val),
                         "difference_pct": (abs(diff_val) / base * 100.0) if base else None,
-                        "severity": "warning"
+                        "severity": "info"
                     })
         # 5. Free cash flow = CFO - Capex (skip if sub_sector_id==19)
         if all(c in x.columns for c in ['free_cash_flow','net_operating_cash_flow','capital_expenditure','symbol']):
@@ -557,7 +557,7 @@ class IDXFinancialValidator(DataValidator):
                         "symbol": sym,
                         "date": date_str,
                         "value": float(ldr),
-                        "severity": "warning"
+                        "severity": "info"
                     })
             # CASA
             if all(k in r.index for k in ['current_account','savings_account','time_deposit']):
@@ -572,7 +572,7 @@ class IDXFinancialValidator(DataValidator):
                             "symbol": sym,
                             "date": date_str,
                             "value": float(casa),
-                            "severity": "warning"
+                            "severity": "info"
                         })
             # CAR
             if 'total_capital' in r.index and 'total_risk_weighted_asset' in r.index and r.get('total_risk_weighted_asset') not in (None,0,np.nan):
@@ -588,7 +588,7 @@ class IDXFinancialValidator(DataValidator):
                         "symbol": sym,
                         "date": date_str,
                         "value": float(car),
-                        "severity": "warning"
+                        "severity": "info"
                     })
             # NIM proxy
             if r.get('net_interest_income') not in (None, np.nan) and r.get('total_assets') not in (None, 0, np.nan):
@@ -627,7 +627,7 @@ class IDXFinancialValidator(DataValidator):
                             "symbol": sym,
                             "date": date_str,
                             "value": float(cir),
-                            "severity": "warning"
+                            "severity": "info"
                         })
             # Coverage ratio
             if r.get('allowance_for_loans') not in (None, np.nan) and r.get('gross_loan') not in (None, 0, np.nan):
@@ -665,7 +665,7 @@ class IDXFinancialValidator(DataValidator):
                     "type": "missing_required_columns",
                     "columns": missing_cols,
                     "message": f"Missing required columns: {', '.join(missing_cols)}",
-                    "severity": "error"
+                    "severity": "flagged"
                 })
                 return {"anomalies": anomalies}
             
@@ -723,7 +723,7 @@ class IDXFinancialValidator(DataValidator):
                             "extreme_pct_changes": extreme_pct_changes.tolist(),
                             "avg_abs_change": round(avg_abs_change, 2),
                             "message": f"Symbol {symbol}: {metric} shows multiple extreme annual changes (>75%) in years {years_affected}. Average absolute change: {avg_abs_change:.1f}%",
-                            "severity": "error"
+                            "severity": "flagged"
                         })
             # Revenue should be greater than earnings
             if all(col in data.columns for col in ['revenue', 'earnings']):
@@ -741,7 +741,7 @@ class IDXFinancialValidator(DataValidator):
                         "date": date_str,
                         "revenue": float(rev.loc[idx]) if pd.notna(rev.loc[idx]) else None,
                         "earnings": float(earn.loc[idx]) if pd.notna(earn.loc[idx]) else None,
-                        "severity": "error"
+                        "severity": "flagged"
                     })
             # Tambah Metrik 1 & 2 (hanya yang akurat)
             # Only run identity/ratio checks if we have sufficient data volume
@@ -759,7 +759,7 @@ class IDXFinancialValidator(DataValidator):
             anomalies.append({
                 "type": "validation_error",
                 "message": f"Error validating annual financial data: {str(e)}",
-                "severity": "error"
+                "severity": "flagged"
             })
         
         return {"anomalies": anomalies}
@@ -779,7 +779,7 @@ class IDXFinancialValidator(DataValidator):
             # Schema checks before using columns
             if 'date' not in x.columns:
                 anomalies.append({
-                    "severity": "error",
+                    "severity": "flagged",
                     "type": "schema_missing_column",
                     "message": "Column 'date' is missing in index_daily_data",
                     "details": {"required_column": "date"}
@@ -788,7 +788,7 @@ class IDXFinancialValidator(DataValidator):
 
             if 'index_code' not in x.columns:
                 anomalies.append({
-                    "severity": "error",
+                    "severity": "flagged",
                     "type": "schema_missing_column",
                     "message": "Column 'index_code' is missing in index_daily_data",
                     "details": {"required_column": "index_code"}
@@ -818,7 +818,7 @@ class IDXFinancialValidator(DataValidator):
                          .tolist()
                     )
                     anomalies.append({
-                        "severity": "error",
+                        "severity": "flagged",
                         "type": "index_daily_data_count_mismatch",
                         "message": f"Expected {EXPECTED_COUNT} non-null index_code entries on {date_val}, found {cnt}",
                         "date": str(date_val),
@@ -831,7 +831,7 @@ class IDXFinancialValidator(DataValidator):
         
         except Exception as e:
             anomalies.append({
-                "severity": "error",
+                "severity": "flagged",
                 "type": "validation_exception",
                 "message": f"index_daily_data validation failed: {str(e)}",
                 "details": {}
@@ -854,7 +854,7 @@ class IDXFinancialValidator(DataValidator):
                     "type": "missing_required_columns",
                     "columns": missing_cols,
                     "message": f"Missing required columns: {', '.join(missing_cols)}",
-                    "severity": "error"
+                    "severity": "flagged"
                 })
                 return {"anomalies": anomalies}
             
@@ -899,7 +899,7 @@ class IDXFinancialValidator(DataValidator):
                             "extreme_pct_changes": extreme_pct_changes.tolist(),
                             "avg_abs_change": round(avg_abs_change, 2),
                             "message": f"Symbol {symbol}: {metric} shows multiple extreme quarterly changes (>100%) in periods {periods_affected}. Average absolute change: {avg_abs_change:.1f}%",
-                            "severity": "error"
+                            "severity": "flagged"
                         })
             # total_revenue should be greater than earnings
             if all(col in data.columns for col in ['total_revenue', 'earnings']):
@@ -917,7 +917,7 @@ class IDXFinancialValidator(DataValidator):
                         "date": date_str,
                         "total_revenue": float(trev.loc[idx]) if pd.notna(trev.loc[idx]) else None,
                         "earnings": float(earn.loc[idx]) if pd.notna(earn.loc[idx]) else None,
-                        "severity": "error"
+                        "severity": "flagged"
                     })
             # Only run identity/ratio checks if we have sufficient data volume
             if len(data) > 10:  # Avoid ratio checks on small datasets
@@ -933,7 +933,7 @@ class IDXFinancialValidator(DataValidator):
             anomalies.append({
                 "type": "validation_error",
                 "message": f"Error validating quarterly financial data: {str(e)}",
-                "severity": "error"
+                "severity": "flagged"
             })
         return {"anomalies": anomalies}
     
@@ -958,7 +958,7 @@ class IDXFinancialValidator(DataValidator):
                     "type": "missing_required_columns",
                     "columns": missing_cols,
                     "message": f"Missing required columns: {', '.join(missing_cols)}",
-                    "severity": "error"
+                    "severity": "flagged"
                 })
                 return {"anomalies": anomalies}
             
@@ -1020,7 +1020,7 @@ class IDXFinancialValidator(DataValidator):
                 #             "expected_net_income": float(expected_net_income),
                 #             "difference": float(difference),
                 #             "difference_pct": float((difference / abs(expected_net_income) * 100) if expected_net_income != 0 else 0),
-                #             "severity": "error"
+                #             "severity": "flagged"
                 #         })
                 
                 # Rule 2: Minority Check
@@ -1042,7 +1042,7 @@ class IDXFinancialValidator(DataValidator):
                             "profit_attributable_to_parent": float(profit_attributable_to_parent),
                             "difference": float(difference),
                             "difference_pct": float((difference / abs(net_income) * 100) if net_income != 0 else 0),
-                            "severity": "error"
+                            "severity": "flagged"
                         })
                 
                 # Rule 3: Revenue Positivity
@@ -1056,14 +1056,14 @@ class IDXFinancialValidator(DataValidator):
                             "date": date_str,
                             "message": f"Revenue must be positive for {symbol} on {date_str}: Operating companies must have revenue",
                             "total_revenue": float(total_revenue),
-                            "severity": "error"
+                            "severity": "flagged"
                         })
         
         except Exception as e:
             anomalies.append({
                 "type": "validation_error",
                 "message": f"Error validating annual financial sheets data: {str(e)}",
-                "severity": "error"
+                "severity": "flagged"
             })
         
         return {"anomalies": anomalies}
@@ -1090,7 +1090,7 @@ class IDXFinancialValidator(DataValidator):
                     "type": "missing_required_columns",
                     "columns": missing_cols,
                     "message": f"Missing required columns: {', '.join(missing_cols)}",
-                    "severity": "error"
+                    "severity": "flagged"
                 })
                 return {"anomalies": anomalies}
             
@@ -1152,7 +1152,7 @@ class IDXFinancialValidator(DataValidator):
                 #             "expected_net_income": float(expected_net_income),
                 #             "difference": float(difference),
                 #             "difference_pct": float((difference / abs(expected_net_income) * 100) if expected_net_income != 0 else 0),
-                #             "severity": "error"
+                #             "severity": "flagged"
                 #         })
                 
                 # Rule 2: Minority Check
@@ -1174,7 +1174,7 @@ class IDXFinancialValidator(DataValidator):
                             "profit_attributable_to_parent": float(profit_attributable_to_parent),
                             "difference": float(difference),
                             "difference_pct": float((difference / abs(net_income) * 100) if net_income != 0 else 0),
-                            "severity": "error"
+                            "severity": "flagged"
                         })
                 
                 # Rule 3: Revenue Positivity
@@ -1188,14 +1188,14 @@ class IDXFinancialValidator(DataValidator):
                             "date": date_str,
                             "message": f"Revenue must be positive for {symbol} on {date_str}: Operating companies must have revenue",
                             "total_revenue": float(total_revenue),
-                            "severity": "error"
+                            "severity": "flagged"
                         })
         
         except Exception as e:
             anomalies.append({
                 "type": "validation_error",
                 "message": f"Error validating quarterly financial sheets data: {str(e)}",
-                "severity": "error"
+                "severity": "flagged"
             })
         
         return {"anomalies": anomalies}
@@ -1217,7 +1217,7 @@ class IDXFinancialValidator(DataValidator):
                     "type": "missing_required_columns",
                     "columns": missing_cols,
                     "message": f"Missing required columns: {', '.join(missing_cols)}",
-                    "severity": "error"
+                    "severity": "flagged"
                 })
                 return {"anomalies": anomalies}
 
@@ -1242,7 +1242,7 @@ class IDXFinancialValidator(DataValidator):
                             "close_price": float(row['close']),
                             "price_change_pct": round(float(row['price_pct_change']), 2),
                             "message": f"Symbol {symbol} on {row['date'].strftime('%Y-%m-%d')}: Extreme daily price change detected",
-                            "severity": "warning"
+                            "severity": "info"
                         })
 
             # # Run additional completeness and coverage checks as a separate rule set
@@ -1253,13 +1253,13 @@ class IDXFinancialValidator(DataValidator):
             #     anomalies.append({
             #         "type": "validation_error",
             #         "message": f"Error running completeness/coverage checks: {str(inner_err)}",
-            #         "severity": "error"
+            #         "severity": "flagged"
             #     })
         except Exception as e:
             anomalies.append({
                 "type": "validation_error",
                 "message": f"Error validating daily data: {str(e)}",
-                "severity": "error"
+                "severity": "flagged"
             })
         return {"anomalies": anomalies}
 
@@ -1285,7 +1285,7 @@ class IDXFinancialValidator(DataValidator):
             missing_cols = [c for c in required_cols if c not in x.columns]
             if missing_cols:
                 anomalies.append({
-                    "severity": "error",
+                    "severity": "flagged",
                     "type": "missing_required_columns",
                     "message": f"Missing required columns for completeness/coverage: {', '.join(missing_cols)}",
                     "columns": missing_cols
@@ -1314,7 +1314,7 @@ class IDXFinancialValidator(DataValidator):
             except Exception as fetch_err:
                 # If we cannot fetch active list, record an error and skip coverage check
                 anomalies.append({
-                    "severity": "error",
+                    "severity": "flagged",
                     "type": "reference_table_fetch_error",
                     "message": f"Failed to fetch active symbols from idx_active_company_profile: {str(fetch_err)}"
                 })
@@ -1339,7 +1339,7 @@ class IDXFinancialValidator(DataValidator):
             # Prepare per-day checks
             if x['date'].isna().all():
                 anomalies.append({
-                    "severity": "error",
+                    "severity": "flagged",
                     "type": "invalid_date_values",
                     "message": "All 'date' values could not be parsed to datetime in idx_daily_data"
                 })
@@ -1373,7 +1373,7 @@ class IDXFinancialValidator(DataValidator):
                         msg = f"On {date_val}, unexpected symbols present: {', '.join(unexpected_symbols_original)}"
 
                     anomalies.append({
-                        "severity": "error",
+                        "severity": "flagged",
                         "type": "daily_symbol_coverage_mismatch",
                         "message": msg,
                         "date": date_val,
@@ -1409,9 +1409,9 @@ class IDXFinancialValidator(DataValidator):
                     summary = "; ".join(parts) if parts else ""
 
                     anomalies.append({
-                        "severity": "error",
+                        "severity": "flagged",
                         "type": "daily_required_fields_null",
-                        "message": f"On {date_val}, some required fields are null — {summary}",
+                        "message": f"On {date_val}, some required fields are null â€” {summary}",
                         "date": date_val,
                         "details": {
                             "null_close_symbols_sample": _syms(null_close)[:50],
@@ -1425,7 +1425,7 @@ class IDXFinancialValidator(DataValidator):
 
         except Exception as e:
             anomalies.append({
-                "severity": "error",
+                "severity": "flagged",
                 "type": "validation_exception",
                 "message": f"idx_daily_data completeness/coverage validation failed: {str(e)}",
                 "details": {}
@@ -1444,7 +1444,7 @@ class IDXFinancialValidator(DataValidator):
         anomalies: List[Dict[str, Any]] = []
         try:
             x = data.copy()
-            print(f"🏢 [SGX Validator] Validating {len(x)} companies (top 50 by market cap)")
+            print(f"ðŸ¢ [SGX Validator] Validating {len(x)} companies (top 50 by market cap)")
             
             # Normalize dates if present
             if 'date' in x.columns:
@@ -1460,7 +1460,7 @@ class IDXFinancialValidator(DataValidator):
                         "type": "missing_required_columns",
                         "columns": [col],
                         "message": f"Missing required column: {col}",
-                        "severity": "error"
+                        "severity": "flagged"
                     })
                 else:
                     null_mask = x[col].isna()
@@ -1473,7 +1473,7 @@ class IDXFinancialValidator(DataValidator):
                             "message": f"{col} is null",
                             "symbol": x.loc[idx].get('symbol'),
                             "date": date_str,
-                            "severity": "error"
+                            "severity": "flagged"
                         })
 
             # 2) close latest date equals today's UTC date
@@ -1482,7 +1482,7 @@ class IDXFinancialValidator(DataValidator):
                     "type": "missing_required_columns",
                     "columns": ["close"],
                     "message": "Missing required column: close",
-                    "severity": "error"
+                    "severity": "flagged"
                 })
             else:
                 # Use Singapore date (UTC+8)
@@ -1535,7 +1535,7 @@ class IDXFinancialValidator(DataValidator):
                             "metric": "close.latest_date",
                             "message": "Unable to determine latest close date",
                             "symbol": sym,
-                            "severity": "error"
+                            "severity": "flagged"
                         })
                     else:
                         yesterday = today_sg - timedelta(days=1)
@@ -1547,7 +1547,7 @@ class IDXFinancialValidator(DataValidator):
                                 "symbol": sym,
                                 "latest_close_date": latest_date.isoformat(),
                                 "today_sg": today_sg.isoformat(),
-                                "severity": "error"
+                                "severity": "flagged"
                             })
 
             # 3) historical_financials percent-change checks
@@ -1556,7 +1556,7 @@ class IDXFinancialValidator(DataValidator):
                     "type": "missing_required_columns",
                     "columns": ["historical_financials"],
                     "message": "Missing required column: historical_financials",
-                    "severity": "warning"
+                    "severity": "info"
                 })
             else:
                 metrics = ['revenue', 'earnings', 'total_assets', 'total_equity', 'operating_pnl']
@@ -1603,14 +1603,14 @@ class IDXFinancialValidator(DataValidator):
                                 "extreme_pct_changes": extreme.tolist(),
                                 "avg_abs_change": round(float(avg_abs_change), 2),
                                 "message": f"{sym}: {m} shows multiple extreme period changes (>100%) in {periods}. Avg abs change: {avg_abs_change:.1f}%",
-                                "severity": "warning"
+                                "severity": "info"
                             })
 
         except Exception as e:
             anomalies.append({
                 "type": "validation_error",
                 "message": f"Error validating sgx_company_report: {str(e)}",
-                "severity": "error"
+                "severity": "flagged"
             })
 
         return {"anomalies": anomalies}
@@ -1633,7 +1633,7 @@ class IDXFinancialValidator(DataValidator):
                     "type": "missing_required_columns",
                     "columns": missing_cols,
                     "message": f"Missing required columns: {', '.join(missing_cols)}",
-                    "severity": "error"
+                    "severity": "flagged"
                 })
                 return {"anomalies": anomalies}
 
@@ -1645,7 +1645,7 @@ class IDXFinancialValidator(DataValidator):
                     "type": "missing_required_columns",
                     "columns": ['date'],
                     "message": "Missing required column: date",
-                    "severity": "error"
+                    "severity": "flagged"
                 })
                 return {"anomalies": anomalies}
             # data = data[~data['yield'].isna()]
@@ -1706,7 +1706,7 @@ class IDXFinancialValidator(DataValidator):
                             "year": int(year),
                             "average_yield": float(avg_yield),
                             "message": f"symbol {symbol} year {year}: Average yield {avg_yield*100:.2f}% >= 30%",
-                            "severity": "warning"
+                            "severity": "info"
                         })
                 yearly_yield_sorted = yearly_yield.sort_index()
                 
@@ -1721,13 +1721,13 @@ class IDXFinancialValidator(DataValidator):
                             "year": int(year),
                             "yield_change": float(change),
                             "message": f"symbol {symbol} year {year}: Yield change {change*100:.2f}% >= 20%",
-                            "severity": "warning"
+                            "severity": "info"
                         })
         except Exception as e:
             anomalies.append({
                 "type": "validation_error",
                 "message": f"Error validating dividend data: {str(e)}",
-                "severity": "error"
+                "severity": "flagged"
             })
         return {"anomalies": anomalies}
     
@@ -1746,7 +1746,7 @@ class IDXFinancialValidator(DataValidator):
                     "type": "missing_required_columns",
                     "columns": missing_cols,
                     "message": f"Missing required columns: {', '.join(missing_cols)}",
-                    "severity": "error"
+                    "severity": "flagged"
                 })
                 return {"anomalies": anomalies}
 
@@ -1872,13 +1872,13 @@ class IDXFinancialValidator(DataValidator):
                         "issues": issues,
                         "values": values,
                         "message": f"symbol {symbol}: Price data inconsistencies detected - {'; '.join(issues)}",
-                        "severity": "error"
+                        "severity": "flagged"
                     })
         except Exception as e:
             anomalies.append({
                 "type": "validation_error",
                 "message": f"Error validating all-time price data: {str(e)}",
-                "severity": "error"
+                "severity": "flagged"
             })
         return {"anomalies": anomalies}
     
@@ -1901,7 +1901,7 @@ class IDXFinancialValidator(DataValidator):
                     "type": "missing_required_columns",
                     "columns": missing_cols,
                     "message": f"Missing required columns: {', '.join(missing_cols)}",
-                    "severity": "error"
+                    "severity": "flagged"
                 })
                 return {"anomalies": anomalies}
 
@@ -1947,8 +1947,8 @@ class IDXFinancialValidator(DataValidator):
                                 "holding_change": int(holding_diff),
                                 "reported_transaction_type": transaction_type,
                                 "expected_transaction_type": "sell",
-                                "message": f"Transaction type mismatch for {symbol} (ID: {record_id}): Holdings decreased by {abs(int(holding_diff)):,} shares ({int(holding_before):,} → {int(holding_after):,}) but transaction_type is '{transaction_type}' instead of 'sell'",
-                                "severity": "error"
+                                "message": f"Transaction type mismatch for {symbol} (ID: {record_id}): Holdings decreased by {abs(int(holding_diff)):,} shares ({int(holding_before):,} â†’ {int(holding_after):,}) but transaction_type is '{transaction_type}' instead of 'sell'",
+                                "severity": "flagged"
                             })
                         
                         # Check: if holdings increased (buy), transaction_type cannot be "sell"
@@ -1964,11 +1964,11 @@ class IDXFinancialValidator(DataValidator):
                                 "holding_change": int(holding_diff),
                                 "reported_transaction_type": transaction_type,
                                 "expected_transaction_type": "buy",
-                                "message": f"Transaction type mismatch for {symbol} (ID: {record_id}): Holdings increased by {int(holding_diff):,} shares ({int(holding_before):,} → {int(holding_after):,}) but transaction_type is '{transaction_type}' instead of 'buy'",
-                                "severity": "error"
+                                "message": f"Transaction type mismatch for {symbol} (ID: {record_id}): Holdings increased by {int(holding_diff):,} shares ({int(holding_before):,} â†’ {int(holding_after):,}) but transaction_type is '{transaction_type}' instead of 'buy'",
+                                "severity": "flagged"
                             })
                     except (ValueError, TypeError) as e:
-                        print(f"⚠️  Error checking transaction type consistency for row {idx}: {e}")
+                        print(f"âš ï¸  Error checking transaction type consistency for row {idx}: {e}")
                         continue
 
             # Rule 4: Transaction value calculation check
@@ -2017,11 +2017,11 @@ class IDXFinancialValidator(DataValidator):
                                 "reported_transaction_value": transaction_value,
                                 "expected_transaction_value": expected_value,
                                 "difference_pct": round(value_diff_pct, 2),
-                                "message": f"Transaction value mismatch for {symbol} (ID: {record_id}): price ({price:,.2f}) × amount ({int(amount_transaction):,}) = {expected_value:,.2f}, but reported transaction_value is {transaction_value:,.2f} (diff: {value_diff_pct:.2f}%)",
-                                "severity": "error"
+                                "message": f"Transaction value mismatch for {symbol} (ID: {record_id}): price ({price:,.2f}) Ã— amount ({int(amount_transaction):,}) = {expected_value:,.2f}, but reported transaction_value is {transaction_value:,.2f} (diff: {value_diff_pct:.2f}%)",
+                                "severity": "flagged"
                             })
                     except (ValueError, TypeError) as e:
-                        print(f"⚠️  Error checking transaction value for row {idx}: {e}")
+                        print(f"âš ï¸  Error checking transaction value for row {idx}: {e}")
                         continue
 
             # Rule 1: Compare filing price with daily price
@@ -2064,13 +2064,13 @@ class IDXFinancialValidator(DataValidator):
                             "daily_close_price": daily_close,
                             "price_difference_pct": round(price_diff_pct, 2),
                             "message": f"Filing price differs significantly from daily close by {price_diff_pct:.2f}% for {ticker} on {filing_date_str} with ID {id} (filing: {filing_price:,.2f}, close: {daily_close:,.2f})",
-                            "severity": "error"
+                            "severity": "flagged"
                         })
                 except (ValueError, TypeError) as e:
-                    print(f"⚠️  Error processing filing for {filing.get('symbol', 'unknown')}: {e}")
+                    print(f"âš ï¸  Error processing filing for {filing.get('symbol', 'unknown')}: {e}")
                     continue
                 except Exception as e:
-                    print(f"❌ Unexpected error processing filing for {filing.get('symbol', 'unknown')}: {e}")
+                    print(f"âŒ Unexpected error processing filing for {filing.get('symbol', 'unknown')}: {e}")
                     continue
 
             # Rule 2: Detect duplicate transactions
@@ -2142,7 +2142,7 @@ class IDXFinancialValidator(DataValidator):
                                         "same_holder": bool(same_holder),
                                         "symbol": symbol_a,
                                         "message": f"Potential duplicate transaction detected for {symbol_a}: {int(row_a['amount_transaction']):,} shares traded on {date_1_str} (ID: {id_a}) and {date_2_str} (ID: {id_b}){date_info}{holder_info}",
-                                        "severity": "error"
+                                        "severity": "flagged"
                                     })
                                     # Only report first match for transaction_a, then move to next transaction
                                     break
@@ -2151,7 +2151,7 @@ class IDXFinancialValidator(DataValidator):
             anomalies.append({
                 "type": "validation_error",
                 "message": f"Error validating filing data: {str(e)}",
-                "severity": "error"
+                "severity": "flagged"
             })
         return {"anomalies": anomalies}
     
@@ -2170,7 +2170,7 @@ class IDXFinancialValidator(DataValidator):
                     "type": "missing_required_columns",
                     "columns": missing_cols,
                     "message": f"Missing required columns: {', '.join(missing_cols)}",
-                    "severity": "error"
+                    "severity": "flagged"
                 })
                 return {"anomalies": anomalies}
 
@@ -2204,13 +2204,13 @@ class IDXFinancialValidator(DataValidator):
                             "first_split_ratio": float(current_split['split_ratio']),
                             "second_split_ratio": float(next_split['split_ratio']),
                             "message": f"Symbol {symbol}: Two stock splits occurred within a short timeframe",
-                            "severity": "warning"
+                            "severity": "info"
                         })
         except Exception as e:
             anomalies.append({
                 "type": "validation_error",
                 "message": f"Error validating stock split data: {str(e)}",
-                "severity": "error"
+                "severity": "flagged"
             })
         return {"anomalies": anomalies}
 
@@ -2228,7 +2228,7 @@ class IDXFinancialValidator(DataValidator):
                     "type": "missing_required_columns",
                     "columns": ['sub_sector'],
                     "message": "Missing required column: sub_sector",
-                    "severity": "error"
+                    "severity": "flagged"
                 })
                 return {"anomalies": anomalies}
 
@@ -2268,7 +2268,7 @@ class IDXFinancialValidator(DataValidator):
                         "value": str(raw_val),
                         "id": record_id,
                         "message": "Subsector field has unsupported type",
-                        "severity": "error"
+                        "severity": "flagged"
                     })
                     continue
 
@@ -2281,7 +2281,7 @@ class IDXFinancialValidator(DataValidator):
                         "length": len(normalized),
                         "id": record_id,
                         "message": f"Subsector list length {len(normalized)} exceeds maximum 5",
-                        "severity": "error"
+                        "severity": "flagged"
                     })
 
                 lowered_seen = {}
@@ -2299,13 +2299,13 @@ class IDXFinancialValidator(DataValidator):
                         "duplicates": sorted(list(duplicates)),
                         "id": record_id,
                         "message": f"Duplicate subsector entries found: {', '.join(sorted(list(duplicates)))}",
-                        "severity": "error"
+                        "severity": "flagged"
                     })
         except Exception as e:
             anomalies.append({
                 "type": "validation_error",
                 "message": f"Error validating idx_news data: {str(e)}",
-                "severity": "error"
+                "severity": "flagged"
             })
         return {"anomalies": anomalies}
 
@@ -2340,7 +2340,7 @@ class IDXFinancialValidator(DataValidator):
                         "symbol": symbol,
                         "financial_year": financial_year,
                         "message": f"Missing income_stmt_metrics.total_revenue for {symbol} ({financial_year})",
-                        "severity": "error"
+                        "severity": "flagged"
                     })
                     continue
                 
@@ -2378,7 +2378,7 @@ class IDXFinancialValidator(DataValidator):
                                 "difference": customer_sum - total_revenue,
                                 "difference_pct": ((customer_sum - total_revenue) / total_revenue * 100) if total_revenue != 0 else 0,
                                 "customer_details": customer_details[:3],
-                                "severity": "error"
+                                "severity": "flagged"
                             })
                     except Exception as e:
                         anomalies.append({
@@ -2386,7 +2386,7 @@ class IDXFinancialValidator(DataValidator):
                             "symbol": symbol,
                             "financial_year": financial_year,
                             "message": f"Error processing customer_breakdown for {symbol} ({financial_year}): {str(e)}",
-                            "severity": "error"
+                            "severity": "flagged"
                         })
                 
                 # Validation Rule 2: property_counts_by_country sum(value1) <= total_revenue
@@ -2418,7 +2418,7 @@ class IDXFinancialValidator(DataValidator):
                                 "difference": property_sum - total_revenue,
                                 "difference_pct": ((property_sum - total_revenue) / total_revenue * 100) if total_revenue != 0 else 0,
                                 "property_details": property_details[:3],
-                                "severity": "error"
+                                "severity": "flagged"
                             })
                     except Exception as e:
                         anomalies.append({
@@ -2426,14 +2426,14 @@ class IDXFinancialValidator(DataValidator):
                             "symbol": symbol,
                             "financial_year": financial_year,
                             "message": f"Error processing property_counts_by_country for {symbol} ({financial_year}): {str(e)}",
-                            "severity": "error"
+                            "severity": "flagged"
                         })
                         
         except Exception as e:
             anomalies.append({
                 "type": "validation_error",
                 "message": f"Error validating SGX manual input data: {str(e)}",
-                "severity": "error"
+                "severity": "flagged"
             })
             
         return {"anomalies": anomalies}
@@ -2453,7 +2453,7 @@ class IDXFinancialValidator(DataValidator):
                     "type": "missing_required_columns",
                     "columns": missing_cols,
                     "message": f"Missing required columns: {', '.join(missing_cols)}",
-                    "severity": "error"
+                    "severity": "flagged"
                 })
                 return {"anomalies": anomalies}
 
@@ -2467,7 +2467,7 @@ class IDXFinancialValidator(DataValidator):
                         "type": "missing_shareholders",
                         "symbol": symbol,
                         "message": f"Symbol {symbol} has no shareholders data",
-                        "severity": "warning"
+                        "severity": "info"
                     })
                     continue
                 
@@ -2481,7 +2481,7 @@ class IDXFinancialValidator(DataValidator):
                             "type": "invalid_shareholders_format",
                             "symbol": symbol,
                             "message": f"Symbol {symbol} has invalid shareholders JSON format",
-                            "severity": "error"
+                            "severity": "flagged"
                         })
                         continue
                 elif isinstance(shareholders, list):
@@ -2491,7 +2491,7 @@ class IDXFinancialValidator(DataValidator):
                         "type": "invalid_shareholders_type",
                         "symbol": symbol,
                         "message": f"Symbol {symbol} has invalid shareholders data type (expected list or JSON string)",
-                        "severity": "error"
+                        "severity": "flagged"
                     })
                     continue
                 
@@ -2500,7 +2500,7 @@ class IDXFinancialValidator(DataValidator):
                         "type": "empty_shareholders",
                         "symbol": symbol,
                         "message": f"Symbol {symbol} has empty shareholders list",
-                        "severity": "warning"
+                        "severity": "info"
                     })
                     continue
                 
@@ -2529,7 +2529,7 @@ class IDXFinancialValidator(DataValidator):
                         "type": "invalid_shareholder_entries",
                         "symbol": symbol,
                         "message": f"Symbol {symbol} has invalid shareholder entries: {'; '.join(invalid_entries)}",
-                        "severity": "error"
+                        "severity": "flagged"
                     })
                 
                 # Check if total percentage is approximately 100% (with 1% tolerance)
@@ -2548,14 +2548,14 @@ class IDXFinancialValidator(DataValidator):
                         "message": f"Symbol {symbol} shareholders percentage sum is {total_percentage:.2f}%, expected ~100%",
                         "total_percentage": round(total_percentage, 2),
                         "difference": round(difference, 2),
-                        "severity": "error"
+                        "severity": "flagged"
                     })
                     
         except Exception as e:
             anomalies.append({
                 "type": "validation_error",
                 "message": f"Error validating company profile data: {str(e)}",
-                "severity": "error"
+                "severity": "flagged"
             })
         return {"anomalies": anomalies}
     
@@ -2570,7 +2570,7 @@ class IDXFinancialValidator(DataValidator):
                 anomalies.append({
                     "type": "empty_data",
                     "message": "idx_sector_reports table is empty",
-                    "severity": "error"
+                    "severity": "flagged"
                 })
                 return {"anomalies": anomalies}
             
@@ -2597,7 +2597,7 @@ class IDXFinancialValidator(DataValidator):
                         "sector": sector,
                         "sub_sector": sub_sector,
                         "message": f"Sector '{sector}' - Sub-sector '{sub_sector}': mcap_summary is missing or null",
-                        "severity": "error"
+                        "severity": "flagged"
                     })
                     continue
                 
@@ -2611,7 +2611,7 @@ class IDXFinancialValidator(DataValidator):
                             "sector": sector,
                             "sub_sector": sub_sector,
                             "message": f"Sector '{sector}' - Sub-sector '{sub_sector}': mcap_summary is not valid JSON",
-                            "severity": "error"
+                            "severity": "flagged"
                         })
                         continue
                 
@@ -2622,7 +2622,7 @@ class IDXFinancialValidator(DataValidator):
                         "sector": sector,
                         "sub_sector": sub_sector,
                         "message": f"Sector '{sector}' - Sub-sector '{sub_sector}': monthly_performance is missing in mcap_summary",
-                        "severity": "error"
+                        "severity": "flagged"
                     })
                     continue
                 
@@ -2634,7 +2634,7 @@ class IDXFinancialValidator(DataValidator):
                         "sector": sector,
                         "sub_sector": sub_sector,
                         "message": f"Sector '{sector}' - Sub-sector '{sub_sector}': monthly_performance is not a dictionary",
-                        "severity": "error"
+                        "severity": "flagged"
                     })
                     continue
                 
@@ -2653,7 +2653,7 @@ class IDXFinancialValidator(DataValidator):
                         "message": f"Sector '{sector}' - Sub-sector '{sub_sector}': monthly_performance does not contain data for {yesterday_str} (yesterday) or {today_str} (today). Latest date: {latest_date}",
                         "expected_dates": [yesterday_str, today_str],
                         "latest_available_date": latest_date,
-                        "severity": "error"
+                        "severity": "flagged"
                     })
             
             print(f"✅ Found {len(anomalies)} sector reports anomalies")
@@ -2662,7 +2662,7 @@ class IDXFinancialValidator(DataValidator):
             anomalies.append({
                 "type": "validation_error",
                 "message": f"Error validating sector reports data: {str(e)}",
-                "severity": "error"
+                "severity": "flagged"
             })
         return {"anomalies": anomalies}
     
@@ -2697,7 +2697,7 @@ class IDXFinancialValidator(DataValidator):
                         anomalies.append({
                             "type": "duplicate_filing_record",
                             "message": f"Duplicate filing detected for {first_row.get('shareholder_name')} on {first_row.get('transaction_date')}",
-                            "severity": "error",
+                            "severity": "flagged",
                             "duplicate_count": len(group),
                             "duplicate_ids": duplicate_ids,  
                             "key_details": {key: str(first_row.get(key)) for key in existing_keys}
@@ -2718,7 +2718,7 @@ class IDXFinancialValidator(DataValidator):
                         anomalies.append({
                             "type": "missing_transaction_details",
                             "message": f"Transaction type '{row.get('transaction_type')}' is present but details are missing: {', '.join(missing_cols)}",
-                            "severity": "error",
+                            "severity": "flagged",
                             "id": row.get('id'),  
                             "symbol": row.get('symbol'),
                             "transaction_date": row.get('transaction_date'),
@@ -2729,7 +2729,7 @@ class IDXFinancialValidator(DataValidator):
             anomalies.append({
                 "type": "validation_error",
                 "message": f"Error validating sgx filings data: {str(e)}",
-                "severity": "error"
+                "severity": "flagged"
             })
         return {"anomalies": anomalies}
     
@@ -2753,7 +2753,7 @@ class IDXFinancialValidator(DataValidator):
                     "type": "reference_data_missing",
                     "rpc_function": "get_idx_mcap_data_1m",
                     "message": "Cannot get latest date from idx_daily_data",
-                    "severity": "error"
+                    "severity": "flagged"
                 })
                 return {"anomalies": anomalies}
             
@@ -2771,28 +2771,28 @@ class IDXFinancialValidator(DataValidator):
                             "message": f"Last date {max_date} is older than yesterday {yesterday} (latest daily data: {latest_daily_date})",
                             "expected_min_date": str(yesterday),
                             "actual_date": str(max_date),
-                            "severity": "error"
+                            "severity": "flagged"
                         })
                 else:
                     anomalies.append({
                         "type": "missing_column",
                         "rpc_function": "get_idx_mcap_data_1m",
                         "message": "Response missing 'date' column",
-                        "severity": "error"
+                        "severity": "flagged"
                     })
             else:
                 anomalies.append({
                     "type": "no_data_returned",
                     "rpc_function": "get_idx_mcap_data_1m",
                     "message": "RPC function returned no data",
-                    "severity": "error"
+                    "severity": "flagged"
                 })
         except Exception as e:
             anomalies.append({
                 "type": "rpc_execution_error",
                 "rpc_function": "get_idx_mcap_data_1m",
                 "message": f"Error executing RPC: {str(e)}",
-                "severity": "error"
+                "severity": "flagged"
             })
         return {"anomalies": anomalies}
     
@@ -2806,7 +2806,7 @@ class IDXFinancialValidator(DataValidator):
                     "type": "reference_data_missing",
                     "rpc_function": "get_indices_price_changes",
                     "message": "Cannot get latest date from idx_daily_data",
-                    "severity": "error"
+                    "severity": "flagged"
                 })
                 return {"anomalies": anomalies}
             
@@ -2823,28 +2823,28 @@ class IDXFinancialValidator(DataValidator):
                             "message": f"Latest date {max_date} does not match latest daily data date {latest_daily_date}",
                             "expected_date": str(latest_daily_date),
                             "actual_date": str(max_date),
-                            "severity": "error"
+                            "severity": "flagged"
                         })
                 else:
                     anomalies.append({
                         "type": "missing_column",
                         "rpc_function": "get_indices_price_changes",
                         "message": "Response missing 'date' column",
-                        "severity": "error"
+                        "severity": "flagged"
                     })
             else:
                 anomalies.append({
                     "type": "no_data_returned",
                     "rpc_function": "get_indices_price_changes",
                     "message": "RPC function returned no data",
-                    "severity": "error"
+                    "severity": "flagged"
                 })
         except Exception as e:
             anomalies.append({
                 "type": "rpc_execution_error",
                 "rpc_function": "get_indices_price_changes",
                 "message": f"Error executing RPC: {str(e)}",
-                "severity": "error"
+                "severity": "flagged"
             })
         return {"anomalies": anomalies}
     
@@ -2867,7 +2867,7 @@ class IDXFinancialValidator(DataValidator):
                             "type": "no_data_returned",
                             "rpc_function": "get_top_mcap_gainers(1)",
                             "message": "RPC function returned empty JSONB structure",
-                            "severity": "error"
+                            "severity": "flagged"
                         })
                         return {"anomalies": anomalies}
                 else:
@@ -2896,28 +2896,28 @@ class IDXFinancialValidator(DataValidator):
                                         "rpc_price": rpc_price,
                                         "daily_price": daily_price,
                                         "daily_date": str(daily_date),
-                                        "severity": "error"
+                                        "severity": "flagged"
                                     })
                 else:
                     anomalies.append({
                         "type": "missing_column",
                         "rpc_function": "get_top_mcap_gainers(1)",
                         "message": "Response missing last_close_price or symbol column",
-                        "severity": "error"
+                        "severity": "flagged"
                     })
             else:
                 anomalies.append({
                     "type": "no_data_returned",
                     "rpc_function": "get_top_mcap_gainers(1)",
                     "message": "RPC function returned no data",
-                    "severity": "error"
+                    "severity": "flagged"
                 })
         except Exception as e:
             anomalies.append({
                 "type": "rpc_execution_error",
                 "rpc_function": "get_top_mcap_gainers(1)",
                 "message": f"Error executing RPC: {str(e)}",
-                "severity": "error"
+                "severity": "flagged"
             })
         return {"anomalies": anomalies}
     
@@ -2940,7 +2940,7 @@ class IDXFinancialValidator(DataValidator):
                             "type": "no_data_returned",
                             "rpc_function": "get_top_mcap_losers(1)",
                             "message": "RPC function returned empty JSONB structure",
-                            "severity": "error"
+                            "severity": "flagged"
                         })
                         return {"anomalies": anomalies}
                 else:
@@ -2969,28 +2969,28 @@ class IDXFinancialValidator(DataValidator):
                                         "rpc_price": rpc_price,
                                         "daily_price": daily_price,
                                         "daily_date": str(daily_date),
-                                        "severity": "error"
+                                        "severity": "flagged"
                                     })
                 else:
                     anomalies.append({
                         "type": "missing_column",
                         "rpc_function": "get_top_mcap_losers(1)",
                         "message": "Response missing last_close_price or symbol column",
-                        "severity": "error"
+                        "severity": "flagged"
                     })
             else:
                 anomalies.append({
                     "type": "no_data_returned",
                     "rpc_function": "get_top_mcap_losers(1)",
                     "message": "RPC function returned no data",
-                    "severity": "error"
+                    "severity": "flagged"
                 })
         except Exception as e:
             anomalies.append({
                 "type": "rpc_execution_error",
                 "rpc_function": "get_top_mcap_losers(1)",
                 "message": f"Error executing RPC: {str(e)}",
-                "severity": "error"
+                "severity": "flagged"
             })
         return {"anomalies": anomalies}
     
@@ -3004,7 +3004,7 @@ class IDXFinancialValidator(DataValidator):
                     "type": "reference_data_missing",
                     "rpc_function": "get_top_gainers(2,true)",
                     "message": "Cannot get latest date from idx_daily_data",
-                    "severity": "error"
+                    "severity": "flagged"
                 })
                 return {"anomalies": anomalies}
             
@@ -3025,7 +3025,7 @@ class IDXFinancialValidator(DataValidator):
                             "type": "no_data_returned",
                             "rpc_function": "get_top_gainers(2,true)",
                             "message": "RPC function returned empty JSONB structure",
-                            "severity": "error"
+                            "severity": "flagged"
                         })
                         return {"anomalies": anomalies}
                 else:
@@ -3047,28 +3047,28 @@ class IDXFinancialValidator(DataValidator):
                             "message": f"Latest close date {max_date} is older than yesterday {yesterday} (latest daily data: {latest_daily_date})",
                             "expected_min_date": str(yesterday),
                             "actual_date": str(max_date),
-                            "severity": "error"
+                            "severity": "flagged"
                         })
                 else:
                     anomalies.append({
                         "type": "missing_column",
                         "rpc_function": "get_top_gainers(2,true)",
                         "message": "Response missing date column",
-                        "severity": "error"
+                        "severity": "flagged"
                     })
             else:
                 anomalies.append({
                     "type": "no_data_returned",
                     "rpc_function": "get_top_gainers(2,true)",
                     "message": "RPC function returned no data",
-                    "severity": "error"
+                    "severity": "flagged"
                 })
         except Exception as e:
             anomalies.append({
                 "type": "rpc_execution_error",
                 "rpc_function": "get_top_gainers(2,true)",
                 "message": f"Error executing RPC: {str(e)}",
-                "severity": "error"
+                "severity": "flagged"
             })
         return {"anomalies": anomalies}
     
@@ -3082,7 +3082,7 @@ class IDXFinancialValidator(DataValidator):
                     "type": "reference_data_missing",
                     "rpc_function": "get_top_losers(2,true)",
                     "message": "Cannot get latest date from idx_daily_data",
-                    "severity": "error"
+                    "severity": "flagged"
                 })
                 return {"anomalies": anomalies}
             
@@ -3103,7 +3103,7 @@ class IDXFinancialValidator(DataValidator):
                             "type": "no_data_returned",
                             "rpc_function": "get_top_losers(2,true)",
                             "message": "RPC function returned empty JSONB structure",
-                            "severity": "error"
+                            "severity": "flagged"
                         })
                         return {"anomalies": anomalies}
                 else:
@@ -3125,28 +3125,28 @@ class IDXFinancialValidator(DataValidator):
                             "message": f"Latest close date {max_date} is older than yesterday {yesterday} (latest daily data: {latest_daily_date})",
                             "expected_min_date": str(yesterday),
                             "actual_date": str(max_date),
-                            "severity": "error"
+                            "severity": "flagged"
                         })
                 else:
                     anomalies.append({
                         "type": "missing_column",
                         "rpc_function": "get_top_losers(2,true)",
                         "message": "Response missing date column",
-                        "severity": "error"
+                        "severity": "flagged"
                     })
             else:
                 anomalies.append({
                     "type": "no_data_returned",
                     "rpc_function": "get_top_losers(2,true)",
                     "message": "RPC function returned no data",
-                    "severity": "error"
+                    "severity": "flagged"
                 })
         except Exception as e:
             anomalies.append({
                 "type": "rpc_execution_error",
                 "rpc_function": "get_top_losers(2,true)",
                 "message": f"Error executing RPC: {str(e)}",
-                "severity": "error"
+                "severity": "flagged"
             })
         return {"anomalies": anomalies}
     
@@ -3160,14 +3160,14 @@ class IDXFinancialValidator(DataValidator):
                     "type": "no_data_returned",
                     "rpc_function": "get_peers_and_idx_valuation_summary('banks')",
                     "message": "RPC function returned no data",
-                    "severity": "error"
+                    "severity": "flagged"
                 })
         except Exception as e:
             anomalies.append({
                 "type": "rpc_execution_error",
                 "rpc_function": "get_peers_and_idx_valuation_summary('banks')",
                 "message": f"Error executing RPC: {str(e)}",
-                "severity": "error"
+                "severity": "flagged"
             })
         return {"anomalies": anomalies}
     
@@ -3181,14 +3181,14 @@ class IDXFinancialValidator(DataValidator):
                     "type": "no_data_returned",
                     "rpc_function": "get_idx_peers_growth_and_forecasts('financial','banks')",
                     "message": "RPC function returned no data",
-                    "severity": "error"
+                    "severity": "flagged"
                 })
         except Exception as e:
             anomalies.append({
                 "type": "rpc_execution_error",
                 "rpc_function": "get_idx_peers_growth_and_forecasts('financial','banks')",
                 "message": f"Error executing RPC: {str(e)}",
-                "severity": "error"
+                "severity": "flagged"
             })
         return {"anomalies": anomalies}
     
@@ -3202,14 +3202,14 @@ class IDXFinancialValidator(DataValidator):
                     "type": "no_data_returned",
                     "rpc_function": "get_news_per_dimensions_by_ticker_subsector('BBCA.JK','banks')",
                     "message": "RPC function returned no data",
-                    "severity": "warning"  # News might legitimately be empty
+                    "severity": "info"  # News might legitimately be empty
                 })
         except Exception as e:
             anomalies.append({
                 "type": "rpc_execution_error",
                 "rpc_function": "get_news_per_dimensions_by_ticker_subsector('BBCA.JK','banks')",
                 "message": f"Error executing RPC: {str(e)}",
-                "severity": "error"
+                "severity": "flagged"
             })
         return {"anomalies": anomalies}
     
@@ -3223,14 +3223,14 @@ class IDXFinancialValidator(DataValidator):
                     "type": "no_data_returned",
                     "rpc_function": "get_idx_yield_ttm",
                     "message": "RPC function returned no data",
-                    "severity": "error"
+                    "severity": "flagged"
                 })
         except Exception as e:
             anomalies.append({
                 "type": "rpc_execution_error",
                 "rpc_function": "get_idx_yield_ttm",
                 "message": f"Error executing RPC: {str(e)}",
-                "severity": "error"
+                "severity": "flagged"
             })
         return {"anomalies": anomalies}
     
@@ -3259,28 +3259,28 @@ class IDXFinancialValidator(DataValidator):
                                 "message": f"Latest data for {symbol} is year {max_year}, expected {expected_year}",
                                 "expected_year": expected_year,
                                 "actual_year": int(max_year),
-                                "severity": "error"
+                                "severity": "flagged"
                             })
                 else:
                     anomalies.append({
                         "type": "missing_column",
                         "rpc_function": "get_companies_loan_quality",
                         "message": "Response missing 'date' or 'symbol' column",
-                        "severity": "error"
+                        "severity": "flagged"
                     })
             else:
                 anomalies.append({
                     "type": "no_data_returned",
                     "rpc_function": "get_companies_loan_quality",
                     "message": "RPC function returned no data",
-                    "severity": "error"
+                    "severity": "flagged"
                 })
         except Exception as e:
             anomalies.append({
                 "type": "rpc_execution_error",
                 "rpc_function": "get_companies_loan_quality",
                 "message": f"Error executing RPC: {str(e)}",
-                "severity": "error"
+                "severity": "flagged"
             })
         return {"anomalies": anomalies}
     
@@ -3294,14 +3294,14 @@ class IDXFinancialValidator(DataValidator):
                     "type": "no_data_returned",
                     "rpc_function": "get_idx_resilience",
                     "message": "RPC function returned no data",
-                    "severity": "error"
+                    "severity": "flagged"
                 })
         except Exception as e:
             anomalies.append({
                 "type": "rpc_execution_error",
                 "rpc_function": "get_idx_resilience",
                 "message": f"Error executing RPC: {str(e)}",
-                "severity": "error"
+                "severity": "flagged"
             })
         return {"anomalies": anomalies}
     
@@ -3315,14 +3315,14 @@ class IDXFinancialValidator(DataValidator):
                     "type": "no_data_returned",
                     "rpc_function": "get_companies_state_owned",
                     "message": "RPC function returned no data",
-                    "severity": "error"
+                    "severity": "flagged"
                 })
         except Exception as e:
             anomalies.append({
                 "type": "rpc_execution_error",
                 "rpc_function": "get_companies_state_owned",
                 "message": f"Error executing RPC: {str(e)}",
-                "severity": "error"
+                "severity": "flagged"
             })
         return {"anomalies": anomalies}
     
@@ -3353,28 +3353,28 @@ class IDXFinancialValidator(DataValidator):
                             "rpc_function": "get_upcoming_dividends_and_splits",
                             "message": f"Found {len(outdated_dates)} records with dates < yesterday {yesterday} (should be >= yesterday)",
                             "count": len(outdated_dates),
-                            "severity": "error"
+                            "severity": "flagged"
                         })
                 else:
                     anomalies.append({
                         "type": "missing_column",
                         "rpc_function": "get_upcoming_dividends_and_splits",
                         "message": f"Response missing date column (checked: {date_cols})",
-                        "severity": "error"
+                        "severity": "flagged"
                     })
             else:
                 anomalies.append({
                     "type": "no_data_returned",
                     "rpc_function": "get_upcoming_dividends_and_splits",
                     "message": "RPC function returned no data",
-                    "severity": "warning"  # Might be no upcoming events
+                    "severity": "info"  # Might be no upcoming events
                 })
         except Exception as e:
             anomalies.append({
                 "type": "rpc_execution_error",
                 "rpc_function": "get_upcoming_dividends_and_splits",
                 "message": f"Error executing RPC: {str(e)}",
-                "severity": "error"
+                "severity": "flagged"
             })
         return {"anomalies": anomalies}
     
@@ -3388,7 +3388,7 @@ class IDXFinancialValidator(DataValidator):
                     "type": "reference_data_missing",
                     "rpc_function": "get_idx_most_traded(1,5)",
                     "message": "Cannot get latest date from idx_daily_data",
-                    "severity": "error"
+                    "severity": "flagged"
                 })
                 return {"anomalies": anomalies}
             
@@ -3405,28 +3405,28 @@ class IDXFinancialValidator(DataValidator):
                             "message": f"Date {max_date} does not match latest daily data date {latest_daily_date}",
                             "expected_date": str(latest_daily_date),
                             "actual_date": str(max_date),
-                            "severity": "error"
+                            "severity": "flagged"
                         })
                 else:
                     anomalies.append({
                         "type": "missing_column",
                         "rpc_function": "get_idx_most_traded(1,5)",
                         "message": "Response missing 'date' column",
-                        "severity": "error"
+                        "severity": "flagged"
                     })
             else:
                 anomalies.append({
                     "type": "no_data_returned",
                     "rpc_function": "get_idx_most_traded(1,5)",
                     "message": "RPC function returned no data",
-                    "severity": "error"
+                    "severity": "flagged"
                 })
         except Exception as e:
             anomalies.append({
                 "type": "rpc_execution_error",
                 "rpc_function": "get_idx_most_traded(1,5)",
                 "message": f"Error executing RPC: {str(e)}",
-                "severity": "error"
+                "severity": "flagged"
             })
         return {"anomalies": anomalies}
     
@@ -3440,7 +3440,7 @@ class IDXFinancialValidator(DataValidator):
                     "type": "reference_data_missing",
                     "rpc_function": "get_idx_volume(1)",
                     "message": "Cannot get latest date from idx_daily_data",
-                    "severity": "error"
+                    "severity": "flagged"
                 })
                 return {"anomalies": anomalies}
             
@@ -3457,28 +3457,28 @@ class IDXFinancialValidator(DataValidator):
                             "message": f"Date {max_date} does not match latest daily data date {latest_daily_date}",
                             "expected_date": str(latest_daily_date),
                             "actual_date": str(max_date),
-                            "severity": "error"
+                            "severity": "flagged"
                         })
                 else:
                     anomalies.append({
                         "type": "missing_column",
                         "rpc_function": "get_idx_volume(1)",
                         "message": "Response missing 'date' column",
-                        "severity": "error"
+                        "severity": "flagged"
                     })
             else:
                 anomalies.append({
                     "type": "no_data_returned",
                     "rpc_function": "get_idx_volume(1)",
                     "message": "RPC function returned no data",
-                    "severity": "error"
+                    "severity": "flagged"
                 })
         except Exception as e:
             anomalies.append({
                 "type": "rpc_execution_error",
                 "rpc_function": "get_idx_volume(1)",
                 "message": f"Error executing RPC: {str(e)}",
-                "severity": "error"
+                "severity": "flagged"
             })
         return {"anomalies": anomalies}
     
@@ -3535,7 +3535,7 @@ class IDXFinancialValidator(DataValidator):
                         "anomalies": [{
                             "type": "invalid_function_name",
                             "message": f"Invalid function name: {function_name}. Valid options: {', '.join(validators.keys())}",
-                            "severity": "error"
+                            "severity": "flagged"
                         }],
                         "status": "error"
                     }
@@ -3558,7 +3558,7 @@ class IDXFinancialValidator(DataValidator):
                             "type": "validator_error",
                             "rpc_function": func_name,
                             "message": f"Error in validator: {str(e)}",
-                            "severity": "error"
+                            "severity": "flagged"
                         })
                 total_checked = len(validators)
             
@@ -3568,7 +3568,7 @@ class IDXFinancialValidator(DataValidator):
             anomalies.append({
                 "type": "validation_error",
                 "message": f"Error validating RPC functions: {str(e)}",
-                "severity": "error"
+                "severity": "flagged"
             })
         
         return {

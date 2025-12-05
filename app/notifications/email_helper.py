@@ -39,16 +39,16 @@ class EmailHelper:
         json_file_path = validation_results.get('json_file_path')
             
         try:
-            # Check if there are any error-level issues that warrant notification
-            # Only send emails for 'error' severity
+            # Check if there are any flagged-level issues that warrant notification
+            # Only send emails for 'flagged' severity
             anomalies = validation_results.get('anomalies', [])
             filtered_anomalies = [
                 anomaly for anomaly in anomalies 
-                if anomaly.get('severity', '').lower() == 'error'
+                if anomaly.get('severity', '').lower() == 'flagged'
             ]
             filtered_anomalies_count = len(filtered_anomalies)
             
-            # Only send email if there are error-level issues 
+            # Only send email if there are flagged-level issues 
             if filtered_anomalies_count > 0:
                 success = await self.email_service.send_validation_alert(
                     table_name=table_name,
@@ -195,14 +195,14 @@ class EmailHelper:
             status = validation_results.get('status', '').lower()
             
             # Send notification if:
-            # 1. There are non-info anomalies detected
-            # 2. Status indicates failure or error
+            # 1. There are flagged anomalies detected
+            # 2. Status indicates failure or flagged
             # 3. Critical/high severity issues exist
             
             if filtered_anomalies_count > 0:
                 return True
             
-            if status in ['failed', 'error', 'critical']:
+            if status in ['failed', 'flagged', 'critical']:
                 return True
             
             # Check for critical anomalies

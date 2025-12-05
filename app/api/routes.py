@@ -1038,6 +1038,7 @@ async def get_table_status():
         healthy = 0
         warning = 0
         error = 0
+        flagged = 0
         
         for table in all_tables:
             # Get most recent validation result for this table
@@ -1049,6 +1050,8 @@ async def get_table_status():
                     healthy += 1
                 elif status == "warning":
                     warning += 1
+                elif status == "flagged":
+                    flagged += 1
                 elif status == "error":
                     error += 1
             else:
@@ -1058,6 +1061,7 @@ async def get_table_status():
         status_data = {
             "healthy": healthy,
             "warning": warning,
+            "flagged": flagged,
             "error": error
         }
         return status_data
@@ -1066,6 +1070,7 @@ async def get_table_status():
         status_data = {
             "healthy": 7,
             "warning": 0,
+            "flagged": 0,
             "error": 0
         }
         return status_data

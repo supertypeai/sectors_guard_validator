@@ -1,4 +1,4 @@
-"""
+﻿"""
 Data validation engine for different table types and validation approaches
 """
 
@@ -66,9 +66,9 @@ class DataValidator:
             
             if results["anomalies_count"] > 0:
                 if results["anomalies_count"] > validation_config.get("error_threshold", 10):
-                    results["status"] = "error"
+                    results["status"] = "flagged"
                 else:
-                    results["status"] = "warning"
+                    results["status"] = "flagged"
             
             # Store results
             await self._store_validation_results(results)
@@ -198,7 +198,7 @@ class DataValidator:
                         "column": col,
                         "count": len(outliers),
                         "message": f"Found {len(outliers)} statistical outliers in column '{col}'",
-                        "severity": "warning"
+                        "severity": "info"
                     })
         
         return {"anomalies": anomalies}
@@ -218,7 +218,7 @@ class DataValidator:
                     "type": "missing_required_fields",
                     "fields": missing_fields,
                     "message": f"Missing required fields: {', '.join(missing_fields)}",
-                    "severity": "error"
+                    "severity": "flagged"
                 })
         
         # Check duplicates
@@ -232,7 +232,7 @@ class DataValidator:
                             "column": field,
                             "count": len(duplicates),
                             "message": f"Found {len(duplicates)} duplicate values in column '{field}'",
-                            "severity": "warning"
+                            "severity": "info"
                         })
         
         # Check value ranges
@@ -245,7 +245,7 @@ class DataValidator:
                     "column": "amount",
                     "count": len(invalid_amounts),
                     "message": f"Found {len(invalid_amounts)} amounts outside valid range ({range_rule['min']}-{range_rule['max']})",
-                    "severity": "error"
+                    "severity": "flagged"
                 })
         
         return {"anomalies": anomalies}
@@ -266,7 +266,7 @@ class DataValidator:
                     "column": col,
                     "percentage": round(null_percentage, 2),
                     "message": f"Column '{col}' has {null_percentage:.1f}% null values",
-                    "severity": "warning"
+                    "severity": "info"
                 })
         
         # Check email format if email column exists
@@ -279,7 +279,7 @@ class DataValidator:
                     "column": "email",
                     "count": len(invalid_emails),
                     "message": f"Found {len(invalid_emails)} invalid email formats",
-                    "severity": "error"
+                    "severity": "flagged"
                 })
         
         return {"anomalies": anomalies}
@@ -306,7 +306,7 @@ class DataValidator:
                     "column": time_column,
                     "count": len(large_gaps),
                     "message": f"Found {len(large_gaps)} significant time gaps in data",
-                    "severity": "warning"
+                    "severity": "info"
                 })
             
             # Check for unusual volume changes (if we have a count or amount column)
@@ -322,14 +322,14 @@ class DataValidator:
                             "column": "amount",
                             "count": len(unusual_changes),
                             "message": f"Found {len(unusual_changes)} days with unusual volume changes",
-                            "severity": "warning"
+                            "severity": "info"
                         })
         
         except Exception as e:
             anomalies.append({
                 "type": "time_series_validation_error",
                 "message": f"Error in time series validation: {str(e)}",
-                "severity": "error"
+                "severity": "flagged"
             })
         
         return {"anomalies": anomalies}
@@ -408,7 +408,7 @@ class DataValidator:
             for attempt in range(max_retries):
                 try:
                     response = self.supabase.table("validation_results").insert(validation_data).execute()
-                    print(f"✅ Stored validation results for {results['table_name']} (attempt {attempt + 1})")
+                    print(f"âœ… Stored validation results for {results['table_name']} (attempt {attempt + 1})")
                     if response.data:
                         print(f"   - Inserted with ID: {response.data[0].get('id', 'unknown')}")
                     return
