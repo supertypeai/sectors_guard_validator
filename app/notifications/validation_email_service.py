@@ -148,11 +148,11 @@ class ValidationEmailService:
         # Format sender with display name
         sender_formatted = format_email_with_display_name(self.default_from_email)
         
-        # Filter to only count 'error' severity anomalies
+        # Filter to only count 'flagged' severity anomalies
         anomalies = validation_results.get('anomalies', [])
         filtered_anomalies_count = len([
             anomaly for anomaly in anomalies 
-            if anomaly.get('severity', '').lower() == 'error'
+            if anomaly.get('severity', '').lower() == 'flagged'
         ])
         
         subject = f"Sectors Guard Alert: {table_name} - {filtered_anomalies_count} validation issues detected"
@@ -241,10 +241,10 @@ class ValidationEmailService:
         """Return the HTML email body for validation alerts."""
         anomalies = validation_results.get('anomalies', [])
         
-        # Filter to only show 'error' severity anomalies
+        # Filter to only show 'flagged' severity anomalies
         filtered_anomalies = [
             anomaly for anomaly in anomalies 
-            if anomaly.get('severity', '').lower() == 'error'
+            if anomaly.get('severity', '').lower() == 'flagged'
         ]
         filtered_anomalies_count = len(filtered_anomalies)
         
@@ -269,16 +269,11 @@ class ValidationEmailService:
             status_indicator = "HEALTHY"
             severity_class = "success"
             header_icon = icons['healthy']
-        elif filtered_anomalies_count <= 5:
+        else:
             status_color = "#f59e0b"  # Yellow
-            status_indicator = "WARNING"
+            status_indicator = "FLAGGED"
             severity_class = "warning"
             header_icon = icons['warning']
-        else:
-            status_color = "#ef4444"  # Red
-            status_indicator = "CRITICAL"
-            severity_class = "danger"
-            header_icon = icons['critical']
         
         return f"""
 <!DOCTYPE html>
@@ -415,7 +410,7 @@ class ValidationEmailService:
                     <div class="email-content" style="padding: 40px 35px; text-align: left;">
                         <div style="text-align: center; margin-bottom: 35px;">
                             <span class="status-badge {severity_class} inter-font">
-                                {filtered_anomalies_count} Critical Issues Detected
+                                {filtered_anomalies_count} Flagged Items
                             </span>
                         </div>
                         
@@ -424,7 +419,7 @@ class ValidationEmailService:
                         </p>
                         
                         <p class="inter-font" style="color: #6b7280; font-size: 16px; line-height: 1.7; margin: 0 0 32px 0; font-weight: 400;">
-                            Our automated validation system has completed analysis of the <strong class="gradient-text" style="font-weight: 600;">{table_name}</strong> dataset and identified <strong style="color: #ef4444; font-weight: 600;">{filtered_anomalies_count}</strong> critical issues that require immediate attention.
+                            Our automated validation system has completed analysis of the <strong class="gradient-text" style="font-weight: 600;">{table_name}</strong> dataset and identified <strong style="color: #f59e0b; font-weight: 600;">{filtered_anomalies_count}</strong> flagged items that require attention.
                         </p>
                         
                         <div class="stats-card" style="background-color: #f8fafc; border: 1px solid #e5e7eb; padding: 32px; margin: 32px 0; border-radius: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.05);">
@@ -451,8 +446,8 @@ class ValidationEmailService:
                                     <div class="inter-font" style="color: #111827; font-size: 16px; font-weight: 600;">{total_rows:,}</div>
                                 </div>
                                 <div style="background: #ffffff; padding: 20px; border-radius: 12px; border: 1px solid #f3f4f6;">
-                                    <div class="inter-font" style="color: #9ca3af; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;">Critical Issues</div>
-                                    <div class="inter-font" style="color: #ef4444; font-size: 16px; font-weight: 700;">{filtered_anomalies_count}</div>
+                                    <div class="inter-font" style="color: #9ca3af; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;">Flagged Items</div>
+                                    <div class="inter-font" style="color: #f59e0b; font-size: 16px; font-weight: 700;">{filtered_anomalies_count}</div>
                                 </div>
                                 <div style="background: #ffffff; padding: 20px; border-radius: 12px; border: 1px solid #f3f4f6;">
                                     <div class="inter-font" style="color: #9ca3af; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;">Validated</div>
