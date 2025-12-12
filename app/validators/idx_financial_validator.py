@@ -1887,7 +1887,9 @@ class IDXFinancialValidator(DataValidator):
         Validate idx_filings table
         Conditions:
         1. Compare filing price with daily price at the timestamp from idx_daily_data
-        2. Detect duplicate transactions: same amount_transaction AND (date difference < 3 days OR same holder_name)
+        2. Detect duplicate transactions: 
+           - Matching URL without matching UID, OR
+           - Matching transaction_type, amount_transaction, holder_name and symbol (all) with date difference < 3 days
         3. Transaction type consistency: share_before > share_after must be "sell", share_before < share_after must be "buy"
         4. Transaction value calculation: price * amount_transaction = transaction_value (within 1% tolerance)
         """
@@ -2074,11 +2076,12 @@ class IDXFinancialValidator(DataValidator):
                     continue
 
             # Rule 2: Detect duplicate transactions
-            # Check if required columns exist
-            duplicate_check_cols = ['amount_transaction', 'timestamp', 'holder_name', 'symbol']
+            # Criteria:
+            # 1. Matching URL without matching UID
+            # 2. Matching transaction_type, amount_transaction, holder_name and symbol (all) with date difference < 3 days
+            duplicate_check_cols = ['timestamp', 'symbol']
             if all(col in data.columns for col in duplicate_check_cols):
-                # Filter out rows with null amount_transaction
-                valid_data = data[data['amount_transaction'].notna()].copy()
+                valid_data = data.copy()
                 
                 if len(valid_data) > 1:
                     # Track which transaction IDs we've already reported as duplicates
@@ -2101,51 +2104,81 @@ class IDXFinancialValidator(DataValidator):
                             if id_b in reported_groups:
                                 continue
                             
-                            # Must be same symbol
-                            symbol_a = str(row_a.get('symbol', '')).strip().upper()
-                            symbol_b = str(row_b.get('symbol', '')).strip().upper()
-                            if symbol_a != symbol_b or not symbol_a:
-                                continue
+                            is_duplicate = False
+                            duplicate_reason = ""
                             
-                            # Check if amount_transaction is the same
-                            if row_a['amount_transaction'] == row_b['amount_transaction']:
-                                # Calculate date difference in days
-                                date_diff = abs((row_a['timestamp'] - row_b['timestamp']).days)
-                                same_holder = str(row_a.get('holder_name', '')).strip().lower() == str(row_b.get('holder_name', '')).strip().lower()
+                            # Criterion 1: Matching URL (source) without matching UID
+                            source_a = str(row_a.get('source', '')).strip()
+                            source_b = str(row_b.get('source', '')).strip()
+                            uid_a = str(row_a.get('UID', '')).strip() if pd.notna(row_a.get('UID')) else ""
+                            uid_b = str(row_b.get('UID', '')).strip() if pd.notna(row_b.get('UID')) else ""
+                            
+                            if source_a and source_b and source_a == source_b:
+                                # Same URL - check if UIDs are different or missing
+                                if uid_a != uid_b:
+                                    is_duplicate = True
+                                    duplicate_reason = f"Same source URL but different UID (UID_1: '{uid_a or 'null'}', UID_2: '{uid_b or 'null'}')"
+                            
+                            # Criterion 2: All four fields match with date difference < 3 days
+                            if not is_duplicate:
+                                # Check if all required columns exist for this criterion
+                                required_cols = ['transaction_type', 'amount_transaction', 'holder_name', 'symbol']
+                                if all(col in row_a.index and col in row_b.index for col in required_cols):
+                                    transaction_type_a = str(row_a.get('transaction_type', '')).strip().lower()
+                                    transaction_type_b = str(row_b.get('transaction_type', '')).strip().lower()
+                                    amount_a = row_a.get('amount_transaction')
+                                    amount_b = row_b.get('amount_transaction')
+                                    holder_a = str(row_a.get('holder_name', '')).strip().lower()
+                                    holder_b = str(row_b.get('holder_name', '')).strip().lower()
+                                    symbol_a = str(row_a.get('symbol', '')).strip().upper()
+                                    symbol_b = str(row_b.get('symbol', '')).strip().upper()
+                                    
+                                    # Check if all four fields match (skip if any critical field is null)
+                                    if (transaction_type_a and transaction_type_b and transaction_type_a == transaction_type_b and
+                                        pd.notna(amount_a) and pd.notna(amount_b) and amount_a == amount_b and
+                                        holder_a and holder_b and holder_a == holder_b and
+                                        symbol_a and symbol_b and symbol_a == symbol_b):
+                                        
+                                        # Calculate date difference in days
+                                        date_diff = abs((row_a['timestamp'] - row_b['timestamp']).days)
+                                        
+                                        # Check if date difference < 3 days
+                                        if date_diff < 3:
+                                            is_duplicate = True
+                                            duplicate_reason = f"Same transaction_type, amount_transaction, holder_name, and symbol with {date_diff} day{'s' if date_diff != 1 else ''} difference"
+                            
+                            if is_duplicate:
+                                # Mark both as reported
+                                reported_groups.add(id_a)
+                                reported_groups.add(id_b)
                                 
-                                # Check if date difference < 3 days OR same holder (but only if date diff <= 3)
-                                # This prevents false positives from transactions many months/years apart
-                                if date_diff < 3 or (same_holder and date_diff <= 3):
-                                    # Mark both as reported
-                                    reported_groups.add(id_a)
-                                    reported_groups.add(id_b)
-                                    
-                                    # Convert all values to JSON serializable types
-                                    # Format dates as YYMMDD
-                                    date_1_str = row_a['timestamp'].strftime('%Y-%m-%d') if hasattr(row_a['timestamp'], 'strftime') else str(row_a['timestamp'])
-                                    date_2_str = row_b['timestamp'].strftime('%Y-%m-%d') if hasattr(row_b['timestamp'], 'strftime') else str(row_b['timestamp'])
-                                    
-                                    # Build clear message parts
-                                    holder_info = f" by same holder '{row_a.get('holder_name', 'N/A')}'" if same_holder else ""
-                                    date_info = f" ({date_diff} day{'s' if date_diff != 1 else ''} apart)" if date_diff > 0 else " (same day)"
-                                    
-                                    anomalies.append({
-                                        "type": "duplicate_transaction",
-                                        "transaction_1_id": id_a,
-                                        "transaction_2_id": id_b,
-                                        "amount_transaction": self._to_json_serializable(row_a['amount_transaction']),
-                                        "holder_1": str(row_a.get('holder_name', 'N/A')),
-                                        "holder_2": str(row_b.get('holder_name', 'N/A')),
-                                        "date_1": row_a['timestamp'].strftime('%Y-%m-%d %H:%M:%S') if hasattr(row_a['timestamp'], 'strftime') else str(row_a['timestamp']),
-                                        "date_2": row_b['timestamp'].strftime('%Y-%m-%d %H:%M:%S') if hasattr(row_b['timestamp'], 'strftime') else str(row_b['timestamp']),
-                                        "date_difference_days": int(date_diff),
-                                        "same_holder": bool(same_holder),
-                                        "symbol": symbol_a,
-                                        "message": f"Potential duplicate transaction detected for {symbol_a}: {int(row_a['amount_transaction']):,} shares traded on {date_1_str} (ID: {id_a}) and {date_2_str} (ID: {id_b}){date_info}{holder_info}",
-                                        "severity": "flagged"
-                                    })
-                                    # Only report first match for transaction_a, then move to next transaction
-                                    break
+                                # Format dates
+                                date_1_str = row_a['timestamp'].strftime('%Y-%m-%d') if hasattr(row_a['timestamp'], 'strftime') else str(row_a['timestamp'])
+                                date_2_str = row_b['timestamp'].strftime('%Y-%m-%d') if hasattr(row_b['timestamp'], 'strftime') else str(row_b['timestamp'])
+                                
+                                symbol_display = str(row_a.get('symbol', 'N/A'))
+                                amount_display = int(row_a['amount_transaction']) if pd.notna(row_a.get('amount_transaction')) else 'N/A'
+                                
+                                anomalies.append({
+                                    "type": "duplicate_transaction",
+                                    "transaction_1_id": id_a,
+                                    "transaction_2_id": id_b,
+                                    "symbol": symbol_display,
+                                    "amount_transaction": self._to_json_serializable(amount_display) if amount_display != 'N/A' else None,
+                                    "transaction_type": str(row_a.get('transaction_type', 'N/A')),
+                                    "holder_name": str(row_a.get('holder_name', 'N/A')),
+                                    "date_1": row_a['timestamp'].strftime('%Y-%m-%d %H:%M:%S') if hasattr(row_a['timestamp'], 'strftime') else str(row_a['timestamp']),
+                                    "date_2": row_b['timestamp'].strftime('%Y-%m-%d %H:%M:%S') if hasattr(row_b['timestamp'], 'strftime') else str(row_b['timestamp']),
+                                    "source_1": str(row_a.get('source', 'N/A')),
+                                    "source_2": str(row_b.get('source', 'N/A')),
+                                    "UID_1": str(row_a.get('UID', 'null')) if pd.notna(row_a.get('UID')) else 'null',
+                                    "UID_2": str(row_b.get('UID', 'null')) if pd.notna(row_b.get('UID')) else 'null',
+                                    "duplicate_reason": duplicate_reason,
+                                    "message": f"Duplicate transaction detected for {symbol_display} on {date_1_str} (ID: {id_a}) and {date_2_str} (ID: {id_b}): {duplicate_reason}",
+                                    "severity": "flagged"
+                                })
+                                # Only report first match for transaction_a, then move to next transaction
+                                break
 
         except Exception as e:
             anomalies.append({
