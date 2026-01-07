@@ -1846,8 +1846,18 @@ class IDXFinancialValidator(DataValidator):
                         if 'all_time_low' in values and min_all is not None and values['all_time_low'] - tol > min_all:
                             issues.append(f"all_time_low {values['all_time_low']:.1f} > daily min all_time {min_all:.1f}")
 
+                # If month <= 3 (Jan-Mar), YTD < 90d, otherwise 90d < YTD
+                current_month = data['date'].max().month if not data.empty and 'date' in data.columns else datetime.now().month
+                
+                if current_month <= 3:
+                    # Q1: ytd < 90d < 52w < all time
+                    high_hierarchy = ['ytd_high', '90d_high', '52w_high', 'all_time_high']
+                    low_hierarchy = ['ytd_low', '90d_low', '52w_low', 'all_time_low']
+                else:
+                    high_hierarchy = ['90d_high', 'ytd_high', '52w_high', 'all_time_high']
+                    low_hierarchy = ['90d_low', 'ytd_low', '52w_low', 'all_time_low']
+                
                 # Check highs
-                high_hierarchy = ['90d_high', 'ytd_high', '52w_high', 'all_time_high']
                 available_highs = [(period, values[period]) for period in high_hierarchy if period in values]
                 for i in range(len(available_highs) - 1):
                     current_period, current_value = available_highs[i]
@@ -1856,7 +1866,6 @@ class IDXFinancialValidator(DataValidator):
                         issues.append(f"{current_period} ({current_value}) > {next_period} ({next_value})")
 
                 # Check lows
-                low_hierarchy = ['90d_low', 'ytd_low', '52w_low', 'all_time_low']
                 available_lows = [(period, values[period]) for period in low_hierarchy if period in values]
                 for i in range(len(available_lows) - 1):
                     current_period, current_value = available_lows[i]
@@ -2171,8 +2180,6 @@ class IDXFinancialValidator(DataValidator):
                                     "date_2": row_b['timestamp'].strftime('%Y-%m-%d %H:%M:%S') if hasattr(row_b['timestamp'], 'strftime') else str(row_b['timestamp']),
                                     "source_1": str(row_a.get('source', 'N/A')),
                                     "source_2": str(row_b.get('source', 'N/A')),
-                                    "UID_1": str(row_a.get('UID', 'null')) if pd.notna(row_a.get('UID')) else 'null',
-                                    "UID_2": str(row_b.get('UID', 'null')) if pd.notna(row_b.get('UID')) else 'null',
                                     "duplicate_reason": duplicate_reason,
                                     "message": f"Duplicate transaction detected for {symbol_display} on {date_1_str} (ID: {id_a}) and {date_2_str} (ID: {id_b}): {duplicate_reason}",
                                     "severity": "flagged"
