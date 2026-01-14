@@ -244,12 +244,17 @@ jobs:
         import sys
         import os
         import json
+        import time
         from datetime import datetime
         
         # Get configuration from environment
         tables_env = os.getenv('TABLES_TO_VALIDATE', '')
         api_base_url = os.getenv('API_BASE_URL', 'https://sectors-guard-validator.fly.dev')
         api_token = os.getenv('BACKEND_API_TOKEN')
+        
+        # Retry configuration
+        MAX_RETRIES = 3
+        INITIAL_BACKOFF = 2  # seconds
         
         if not api_token:
             print('::error::BACKEND_API_TOKEN not configured')
@@ -262,6 +267,7 @@ jobs:
         tables_to_validate = [t.strip() for t in tables_env.split(',') if t.strip()]
         print(f'📋 Tables to validate: {tables_to_validate}')
         print(f'🌐 API URL: {api_base_url}')
+        print(f'🔄 Retry configuration: max_retries={MAX_RETRIES}, exponential_backoff')
         
         # Prepare request headers
         headers = {
@@ -269,20 +275,84 @@ jobs:
             'Content-Type': 'application/json'
         }
         
+        def should_retry(status_code=None, exception=None):
+            # Retry on network errors
+            if exception:
+                if isinstance(exception, (requests.exceptions.ConnectionError, 
+                                         requests.exceptions.Timeout,
+                                         requests.exceptions.RequestException)):
+                    return True
+            # Retry on 5xx server errors
+            if status_code and 500 <= status_code < 600:
+                return True
+            return False
+        
+        def make_request_with_retry(table_name, max_retries=MAX_RETRIES):
+            last_exception = None
+            last_response = None
+            
+            for attempt in range(max_retries + 1):
+                try:
+                    if attempt > 0:
+                        backoff_time = INITIAL_BACKOFF * (2 ** (attempt - 1))
+                        print(f'Retry attempt {attempt}/{max_retries} for {table_name} after {backoff_time}s delay...')
+                        time.sleep(backoff_time)
+                    
+                    # Call API endpoint
+                    response = requests.post(
+                        f'{api_base_url}/api/validation/run/{table_name}',
+                        headers=headers,
+                        timeout=900  # 15 minutes timeout for large datasets
+                    )
+                    
+                    # Check if we should retry based on status code
+                    if should_retry(status_code=response.status_code):
+                        last_response = response
+                        if attempt < max_retries:
+                            print(f'⚠️  HTTP {response.status_code} error - will retry')
+                            continue
+                        else:
+                            print(f'❌ Max retries reached for {table_name}')
+                            return response
+                    
+                    # Success or non-retryable error
+                    return response
+                    
+                except requests.exceptions.Timeout as e:
+                    last_exception = e
+                    if attempt < max_retries:
+                        print(f'⚠️  Timeout error - will retry')
+                        continue
+                    else:
+                        print(f'❌ Max retries reached for {table_name}')
+                        raise
+                        
+                except requests.exceptions.RequestException as e:
+                    last_exception = e
+                    if should_retry(exception=e) and attempt < max_retries:
+                        print(f'⚠️  Network error - will retry')
+                        continue
+                    else:
+                        if attempt >= max_retries:
+                            print(f'❌ Max retries reached for {table_name}')
+                        raise
+            
+            # If we get here, we've exhausted retries
+            if last_response:
+                return last_response
+            if last_exception:
+                raise last_exception
+        
         total_anomalies = 0
         results_summary = []
         
         # Validate each table via API
         for table_name in tables_to_validate:
-            print(f'\\n🔍 Validating table: {table_name}')
+            print(f'\\nValidating table: {table_name}')
             
             try:
-                # Call API endpoint
-                response = requests.post(
-                    f'{api_base_url}/api/validation/run/{table_name}',
-                    headers=headers,
-                    timeout=600  # 10 minutes timeout for large datasets
-                )
+                # Call API endpoint with retry mechanism
+                response = make_request_with_retry(table_name)
                 
                 if response.status_code == 200:
                     result = response.json()
@@ -300,7 +370,7 @@ jobs:
                     if anomalies_count > 0:
                         print(f'⚠️  {table_name}: {anomalies_count} anomalies detected')
                         if result.get('email_sent'):
-                            print(f'📧 Email notification sent for {table_name}')
+                            print(f'Email notification sent for {table_name}')
                     else:
                         print(f'✅ {table_name}: No anomalies found')
                         
@@ -362,7 +432,7 @@ jobs:
                 })
         
         # Print summary
-        print(f'\\n=== 📊 Validation Summary ===')
+        print(f'\\n=== Validation Summary ===')
         print(f'Tables validated: {len(tables_to_validate)}')
         print(f'Total anomalies detected: {total_anomalies}')
         print(f'Tables with errors: {len([r for r in results_summary if r[\"status\"] == \"error\"])}')
