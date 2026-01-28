@@ -253,8 +253,8 @@ jobs:
         api_token = os.getenv('BACKEND_API_TOKEN')
         
         # Retry configuration
-        MAX_RETRIES = 3
-        INITIAL_BACKOFF = 2  # seconds
+        MAX_RETRIES = 5
+        INITIAL_BACKOFF = 60  # seconds
         
         if not api_token:
             print('::error::BACKEND_API_TOKEN not configured')
