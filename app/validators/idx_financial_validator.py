@@ -174,6 +174,9 @@ class IDXFinancialValidator(DataValidator):
             elif query_table == 'idx_combine_financials_quarterly' and not start_date and not end_date:
                 start_date = (today - timedelta(days=365)).isoformat()
                 end_date = today.isoformat()
+            elif query_table == 'idx_filings' and not start_date and not end_date:
+                start_date = (today - timedelta(days=125)).isoformat()
+                end_date = today.isoformat()
             elif query_table in ['idx_financial_sheets_annual', 'idx_financial_sheets_quarterly'] and not start_date and not end_date:
                 # Default to last 2 years for financial sheets
                 start_date = (today - timedelta(days=730)).isoformat()
@@ -198,12 +201,6 @@ class IDXFinancialValidator(DataValidator):
                 try:
                     start_val = start_date
                     end_val = end_date
-                    # For timestamp columns, widen to full-day range to be inclusive
-                    if date_filter_column == 'timestamp':
-                        if start_val:
-                            start_val = f"{start_val}T00:00:00"
-                        if end_val:
-                            end_val = f"{end_val}T23:59:59"
                     if start_val:
                         query = query.gte(date_filter_column, start_val)
                     if end_val:
@@ -2028,7 +2025,7 @@ class IDXFinancialValidator(DataValidator):
                                 "reported_transaction_value": transaction_value,
                                 "expected_transaction_value": expected_value,
                                 "difference_pct": round(value_diff_pct, 2),
-                                "message": f"Transaction value mismatch for {symbol} (ID: {record_id}): price ({price:,.2f}) Ã— amount ({int(amount_transaction):,}) = {expected_value:,.2f}, but reported transaction_value is {transaction_value:,.2f} (diff: {value_diff_pct:.2f}%)",
+                                "message": f"Transaction value mismatch for {symbol} (ID: {record_id}): price ({price:,.2f}), amount ({int(amount_transaction):,}) = {expected_value:,.2f}, but reported transaction_value is {transaction_value:,.2f} (diff: {value_diff_pct:.2f}%)",
                                 "severity": "flagged"
                             })
                     except (ValueError, TypeError) as e:

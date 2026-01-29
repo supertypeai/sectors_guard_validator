@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     
     # Validation settings
     default_error_threshold: int = 5
-    validation_timeout_seconds: int = 300  # 5 minutes
+    validation_timeout_seconds: int = 420  # 7 minutes
     
     # API settings
     api_host: str = "0.0.0.0"
