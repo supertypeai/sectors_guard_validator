@@ -2,6 +2,7 @@
 import numpy as np
 from typing import Dict, List, Any, Optional, Tuple
 from datetime import datetime, timedelta
+from pathlib import Path
 import re
 import asyncio
 import pytz
@@ -37,7 +38,81 @@ class IDXFinancialValidator(DataValidator):
             'idx_sector_reports': self._validate_sector_reports,
             'sgx_filings': self._validate_sgx_filings
         }
-    
+        # Cache for IDXIC reference data
+        self._idxic_cache = None
+
+    def _load_idxic_reference(self) -> Dict[str, any]:
+        """
+        Load IDXIC classification names from CSV file.
+        Returns sets of valid names AND hierarchy mappings (sub_industry -> parent industry).
+        """
+        if self._idxic_cache is not None:
+            return self._idxic_cache
+
+        try:
+            csv_path = Path(__file__).parents[2] / "idxic_name_202602050852.csv"
+            df = pd.read_csv(csv_path)
+
+            self._idxic_cache = {
+                'sectors': set(df[df['classification'] == 'Sector']['name'].str.lower().str.strip()),
+                'sub_sectors': set(df[df['classification'] == 'Sub Sector']['name'].str.lower().str.strip()),
+                'industries': set(df[df['classification'] == 'Industry']['name'].str.lower().str.strip()),
+                'sub_industries': set(df[df['classification'] == 'Sub Industry']['name'].str.lower().str.strip()),
+            }
+
+            # Build hierarchy mapping: sub_industry_name -> parent_industry_name
+            # Based on code prefixes (e.g., A111 -> A11, B121 -> B12)
+            sub_industry_to_industry = {}
+            code_to_name = {}
+
+            for _, row in df.iterrows():
+                code = row['code']
+                name = row['name'].lower().strip()
+                classification = row['classification']
+                code_to_name[code] = (name, classification)
+
+            # For each sub_industry, find its parent industry by code prefix
+            for _, row in df.iterrows():
+                if row['classification'] == 'Sub Industry':
+                    sub_ind_code = row['code']
+                    sub_ind_name = row['name'].lower().strip()
+
+                    # Parent industry code is the first 3 characters (e.g., A111 -> A11)
+                    parent_code = sub_ind_code[:3]
+
+                    if parent_code in code_to_name:
+                        parent_name, parent_class = code_to_name[parent_code]
+                        if parent_class == 'Industry':
+                            sub_industry_to_industry[sub_ind_name] = parent_name
+
+            self._idxic_cache['sub_industry_to_industry'] = sub_industry_to_industry
+
+            # Also create a combined set for broader matching
+            self._idxic_cache['all_names'] = (
+                self._idxic_cache['sectors'] |
+                self._idxic_cache['sub_sectors'] |
+                self._idxic_cache['industries'] |
+                self._idxic_cache['sub_industries']
+            )
+
+            print(f"📋 Loaded IDXIC reference: {len(self._idxic_cache['sectors'])} sectors, "
+                  f"{len(self._idxic_cache['sub_sectors'])} sub-sectors, "
+                  f"{len(self._idxic_cache['industries'])} industries, "
+                  f"{len(self._idxic_cache['sub_industries'])} sub-industries, "
+                  f"{len(sub_industry_to_industry)} hierarchy mappings")
+
+            return self._idxic_cache
+        except Exception as e:
+            print(f"⚠️ Error loading IDXIC reference: {e}")
+            return {
+                'sectors': set(),
+                'sub_sectors': set(),
+                'industries': set(),
+                'sub_industries': set(),
+                'sub_industry_to_industry': {},
+                'all_names': set()
+            }
+
     async def validate_table(self, table_name: str, start_date: Optional[str] = None, end_date: Optional[str] = None, run_only_coverage: bool = False) -> Dict[str, Any]:
         """
         Override parent method to use IDX-specific validation rules with optional date filtering
@@ -2478,7 +2553,9 @@ class IDXFinancialValidator(DataValidator):
     async def _validate_company_profile(self, data: pd.DataFrame) -> Dict[str, Any]:
         """
         Validate idx_company_profile table
-        Condition: Check if shareholders share_percentage sums to 100% (with 1% tolerance)
+        Conditions:
+        1. Check if shareholders share_percentage sums to 100% (with 1% tolerance)
+        2. Check if sector and industry names match IDXIC reference
         """
         anomalies = []
         try:
@@ -2494,9 +2571,72 @@ class IDXFinancialValidator(DataValidator):
                 })
                 return {"anomalies": anomalies}
 
+            # Load IDXIC reference for sector/industry validation
+            idxic_ref = self._load_idxic_reference()
+
             for idx, row in data.iterrows():
                 symbol = row.get('symbol')
-                
+
+                # ===== IDXIC Validation =====
+                # Check sector column against IDXIC reference
+                sector = row.get('sector')
+                if sector and isinstance(sector, str) and sector.strip():
+                    sector_lower = sector.strip().lower()
+                    if sector_lower not in idxic_ref['sectors']:
+                        anomalies.append({
+                            "type": "idxic_name_mismatch",
+                            "symbol": symbol,
+                            "field": "sector",
+                            "value": sector,
+                            "message": f"Sector '{sector}' for symbol {symbol} not found in IDXIC reference",
+                            "severity": "flagged"
+                        })
+
+                # Check industry column against IDXIC reference
+                industry = row.get('industry')
+                if industry and isinstance(industry, str) and industry.strip():
+                    industry_lower = industry.strip().lower()
+                    if industry_lower not in idxic_ref['industries']:
+                        anomalies.append({
+                            "type": "idxic_name_mismatch",
+                            "symbol": symbol,
+                            "field": "industry",
+                            "value": industry,
+                            "message": f"Industry '{industry}' for symbol {symbol} not found in IDXIC reference",
+                            "severity": "flagged"
+                        })
+
+                # Check sub_industry column against IDXIC reference
+                sub_industry = row.get('sub_industry')
+                if sub_industry and isinstance(sub_industry, str) and sub_industry.strip():
+                    sub_industry_lower = sub_industry.strip().lower()
+
+                    # First check: does sub_industry name exist?
+                    if sub_industry_lower not in idxic_ref['sub_industries']:
+                        anomalies.append({
+                            "type": "idxic_name_mismatch",
+                            "symbol": symbol,
+                            "field": "sub_industry",
+                            "value": sub_industry,
+                            "message": f"Sub-industry '{sub_industry}' for symbol {symbol} not found in IDXIC reference",
+                            "severity": "flagged"
+                        })
+                    # Second check: does sub_industry belong to the correct parent industry?
+                    elif industry and isinstance(industry, str) and industry.strip():
+                        expected_parent = idxic_ref['sub_industry_to_industry'].get(sub_industry_lower)
+                        if expected_parent and expected_parent != industry_lower:
+                            anomalies.append({
+                                "type": "idxic_hierarchy_mismatch",
+                                "symbol": symbol,
+                                "field": "sub_industry",
+                                "sub_industry": sub_industry,
+                                "industry": industry,
+                                "expected_industry": expected_parent.title(),
+                                "message": f"Sub-industry '{sub_industry}' for symbol {symbol} should belong to industry '{expected_parent.title()}', not '{industry}'",
+                                "severity": "flagged"
+                            })
+
+                # ===== Shareholders Validation =====
                 # Validate shareholders
                 shareholders = row.get('shareholders')
                 if shareholders is None or (isinstance(shareholders, float) and pd.isna(shareholders)):
@@ -2599,7 +2739,9 @@ class IDXFinancialValidator(DataValidator):
     async def _validate_sector_reports(self, data: pd.DataFrame) -> Dict[str, Any]:
         """
         Validate idx_sector_reports table
-        Condition: Check if mcap_summary.monthly_performance has data for yesterday or today
+        Conditions:
+        1. Check if mcap_summary.monthly_performance has data for yesterday or today
+        2. Check if sector and sub_sector names match IDXIC reference
         """
         anomalies = []
         try:
@@ -2610,24 +2752,57 @@ class IDXFinancialValidator(DataValidator):
                     "severity": "flagged"
                 })
                 return {"anomalies": anomalies}
-            
+
             # Get today and yesterday dates
             jakarta_tz = pytz.timezone('Asia/Jakarta')
             today = datetime.now(jakarta_tz).date()
             yesterday = today - timedelta(days=1)
-            
+
             # Convert to string format for comparison
             today_str = today.strftime('%Y-%m-%d')
             yesterday_str = yesterday.strftime('%Y-%m-%d')
-            
+
             print(f"📅 Checking for dates: {yesterday_str} (yesterday) or {today_str} (today)")
-            
+
+            # Load IDXIC reference for sector/sub-sector validation
+            idxic_ref = self._load_idxic_reference()
+
             for idx in data.index:
                 row = data.loc[idx]
                 sector = row.get('sector', 'Unknown')
                 sub_sector = row.get('sub_sector', 'Unknown')
                 mcap_summary = row.get('mcap_summary')
-                
+
+                # ===== IDXIC Validation =====
+                # Check sector column against IDXIC reference
+                if sector and sector != 'Unknown' and isinstance(sector, str) and sector.strip():
+                    sector_lower = sector.strip().lower()
+                    if sector_lower not in idxic_ref['sectors']:
+                        anomalies.append({
+                            "type": "idxic_name_mismatch",
+                            "sector": sector,
+                            "sub_sector": sub_sector,
+                            "field": "sector",
+                            "value": sector,
+                            "message": f"Sector '{sector}' not found in IDXIC reference",
+                            "severity": "flagged"
+                        })
+
+                # Check sub_sector column against IDXIC reference
+                if sub_sector and sub_sector != 'Unknown' and isinstance(sub_sector, str) and sub_sector.strip():
+                    sub_sector_lower = sub_sector.strip().lower()
+                    if sub_sector_lower not in idxic_ref['sub_sectors']:
+                        anomalies.append({
+                            "type": "idxic_name_mismatch",
+                            "sector": sector,
+                            "sub_sector": sub_sector,
+                            "field": "sub_sector",
+                            "value": sub_sector,
+                            "message": f"Sub-sector '{sub_sector}' not found in IDXIC reference",
+                            "severity": "flagged"
+                        })
+
+                # ===== Data Freshness Validation =====
                 if mcap_summary is None or (isinstance(mcap_summary, float) and pd.isna(mcap_summary)):
                     anomalies.append({
                         "type": "missing_mcap_summary",
