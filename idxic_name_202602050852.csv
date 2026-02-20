@@ -1,0 +1,247 @@
+"code","classification","name"
+A1,Sub Sector,"Oil, Gas & Coal"
+A11,Industry,Oil & Gas
+A111,Sub Industry,Oil & Gas Production & Refinery
+A112,Sub Industry,Oil & Gas Storage & Distribution
+A12,Industry,Coal
+A121,Sub Industry,Coal Production
+A122,Sub Industry,Coal Distribution
+A13,Industry,"Oil, Gas & Coal Supports"
+A131,Sub Industry,Oil & Gas Drilling Service
+A132,Sub Industry,"Oil, Gas & Coal Equipment & Services"
+A2,Sub Sector,Alternative Energy
+A21,Industry,Alternative Energy Equipment
+A211,Sub Industry,Alternative Energy Equipment
+A22,Industry,Alternative Fuels
+A221,Sub Industry,Alternative Fuels
+B,Sector,Basic Materials
+B1,Sub Sector,Basic Materials
+B11,Industry,Chemicals
+B111,Sub Industry,Basic Chemicals
+B112,Sub Industry,Agricultural Chemicals
+B113,Sub Industry,Specialty Chemicals
+B12,Industry,Construction Materials
+B121,Sub Industry,Construction Materials
+B13,Industry,Containers & Packaging
+B131,Sub Industry,Containers & Packaging
+B14,Industry,Metals & Minerals
+B141,Sub Industry,Aluminum
+B142,Sub Industry,Cooper
+B143,Sub Industry,Gold
+B144,Sub Industry,Iron & Steel
+B145,Sub Industry,Precious Metals & Minerals
+B146,Sub Industry,Diversified Metals & Minerals
+B147,Sub Industry,Mining Equipment & Services
+B15,Industry,Forestry & Paper
+B151,Sub Industry,Timber
+B152,Sub Industry,Paper
+B153,Sub Industry,Diversified Forest
+C,Sector,Industrials
+C1,Sub Sector,Industrial Goods
+C11,Industry,Aerospace & Defense
+C111,Sub Industry,Aerospace & Defense
+C12,Industry,Building Products & Fixtures
+C121,Sub Industry,Building Products & Fixtures
+C13,Industry,Electrical
+C131,Sub Industry,Electrical Components & Equipment
+C132,Sub Industry,Heavy Electrical Equipment
+C14,Industry,Machinery
+C141,Sub Industry,Construction Machinery & Heavy Vehicles
+C142,Sub Industry,Agricultural & Farm Machinery
+C143,Sub Industry,Industrial Machinery & Components
+C2,Sub Sector,Industrial Services
+C21,Industry,Diversified Industrial Trading
+C211,Sub Industry,Diversified Industrial Trading 
+C22,Industry,Commercial Services
+C221,Sub Industry,Commercial Printing
+C222,Sub Industry,Environmental & Facilities Services
+C223,Sub Industry,Office Supplies
+C224,Sub Industry,Business Support Services
+C23,Industry,Professional Services
+C231,Sub Industry,Human Resource & Employment Services
+C232,Sub Industry,Research & Consulting Services
+C3,Sub Sector,Multi-sector Holdings
+C31,Industry,Multi-sector Holdings
+C311,Sub Industry,Multi-sector Holdings
+D,Sector,Consumer Non-Cyclicals
+D1,Sub Sector,Food & Staples Retailing
+D11,Industry,Food & Staples Retailing
+D111,Sub Industry,Drug Retail & Distributors
+D112,Sub Industry,Food Retail & Distributors
+D113,Sub Industry,Supermarkets & Convenience Store
+D2,Sub Sector,Food & Beverage
+D21,Industry,Beverages
+D211,Sub Industry,Liquors
+D212,Sub Industry,Soft Drinks
+D22,Industry,Processed Foods
+D221,Sub Industry,Dairy Products
+D222,Sub Industry,Processed Foods
+D23,Industry,Agricultural Products
+D231,Sub Industry,"Fish, Meat, & Poultry"
+D232,Sub Industry,Plantations & Crops
+D3,Sub Sector,Tobacco
+D31,Industry,Tobacco
+D311,Sub Industry,Tobacco
+D4,Sub Sector,Nondurable Household Products
+D41,Industry,Household Products
+D411,Sub Industry,Household Products
+D42,Industry,Personal Care Products
+D421,Sub Industry,Personal Care Products
+E,Sector,Consumer Cyclicals
+E1,Sub Sector,Automobiles & Components
+E11,Industry,Auto Components
+E111,Sub Industry,Auto Parts & Equipment
+E112,Sub Industry,Tires
+E12,Industry,Automobiles
+E121,Sub Industry,Car Manufacturers
+E122,Sub Industry,Motorcycle Manufacturers
+E2,Sub Sector,Household Goods
+E21,Industry,Household Goods
+E211,Sub Industry,Home Furnishings
+E212,Sub Industry,Household Appliances
+E213,Sub Industry,Housewares & Specialties
+E3,Sub Sector,Leisure Goods
+E31,Industry,Consumer Electronics
+E311,Sub Industry,Consumer Electronics
+E32,Industry,Sport Equipment & Hobbies Goods
+E321,Sub Industry,Sport Equipment & Hobbies Goods
+E4,Sub Sector,Apparel & Luxury Goods
+E41,Industry,Apparel & Luxury Goods
+E411,Sub Industry,"Clothing, Accessories & Bags"
+E412,Sub Industry,Footwear
+E413,Sub Industry,Textiles
+E5,Sub Sector,Consumer Services
+E51,Industry,Tourism & Recreation
+E511,Sub Industry,Gaming Venue
+E512,Sub Industry,"Hotels, Resorts & Cruise Lines"
+E513,Sub Industry,Travel Agencies
+E514,Sub Industry,Recreational & Sports Facilities
+E515,Sub Industry,Restaurants
+E52,Industry,Education & Support Services
+E521,Sub Industry,Education Services
+E522,Sub Industry,Consumer Support Services
+E6,Sub Sector,Media & Entertainment
+E61,Industry,Media
+E611,Sub Industry,Advertising
+E612,Sub Industry,Broadcasting
+E613,Sub Industry,Cable & Satellite
+E614,Sub Industry,Consumer Publishing
+E62,Industry,Entertainment & Movie Production
+E621,Sub Industry,Entertainment & Movie Production
+E7,Sub Sector,Retailing
+E71,Industry,Consumer Distributors
+E711,Sub Industry,Consumer Distributors
+E72,Industry,Internet & Homeshop Retail
+E721,Sub Industry,Internet & Homeshop Retail
+E73,Industry,Department Stores
+E731,Sub Industry,Department Stores
+E74,Industry,Specialty Retail
+E741,Sub Industry,Apparel & Textile Retail
+E742,Sub Industry,Electronics Retail
+E743,Sub Industry,Home Improvement Retail
+E744,Sub Industry,Specialty Stores
+E745,Sub Industry,Automotive Retail
+F,Sector,Healthcare
+F1,Sub Sector,Healthcare Equipment & Providers
+F11,Industry,Healthcare Equipment & Supplies
+F111,Sub Industry,Healthcare Equipment
+F112,Sub Industry,Healthcare Supplies & Distributions
+F12,Industry,Healthcare Providers
+F121,Sub Industry,Healthcare Providers
+F2,Sub Sector,Pharmaceuticals & Health Care Research
+F21,Industry,Pharmaceuticals
+F211,Sub Industry,Pharmaceuticals
+F22,Industry,Healthcare Research
+F221,Sub Industry,Healthcare Research
+G,Sector,Financials
+G1,Sub Sector,Banks
+G11,Industry,Banks
+G111,Sub Industry,Banks
+G2,Sub Sector,Financing Service
+G21,Industry,Consumer Financing
+G211,Sub Industry,Consumer Financing
+G22,Industry,Business Financing
+G221,Sub Industry,Venture Capital
+G222,Sub Industry,Specialize Business Financing
+G3,Sub Sector,Investment Service
+G31,Industry,Investment Services
+G311,Sub Industry,Investment Management
+G312,Sub Industry,Investment Banking & Brokerage Services
+G313,Sub Industry,Market Operators
+G314,Sub Industry,Investment Service Support
+G4,Sub Sector,Insurance
+G41,Industry,Insurance
+G411,Sub Industry,Insurance Brokers
+G412,Sub Industry,General Insurance
+G413,Sub Industry,Life Insurance
+G414,Sub Industry,Reinsurance
+G5,Sub Sector,Holding & Investment Companies
+G51,Industry,Holding & Investment Companies
+G511,Sub Industry,Financial Holdings
+G512,Sub Industry,Investment Companies
+H,Sector,Properties & Real Estate
+H1,Sub Sector,Properties & Real Estate
+H11,Industry,Real Estate Management & Development
+H111,Sub Industry,Real Estate Development & Management
+H112,Sub Industry,Real Estate Services
+I,Sector,Technology
+I1,Sub Sector,Software & IT Services
+I11,Industry,Online Applications & Services
+I111,Sub Industry,Online Applications & Services
+I12,Industry,IT Services & Consulting
+I121,Sub Industry,IT Services & Consulting
+I13,Industry,Software
+I131,Sub Industry,Software
+I2,Sub Sector,Technology Hardware & Equipment
+I21,Industry,Networking Equipment
+I211,Sub Industry,Networking Equipment
+I22,Industry,Computer Hardware
+I221,Sub Industry,Computer Hardware
+I23,Industry,"Electronic Equipment, Instruments & Components"
+I231,Sub Industry,Electronic Equipment & Instruments
+I232,Sub Industry,Electronic Components & Semiconductors
+J,Sector,Infrastructures
+J1,Sub Sector,Transportation Infrastructure
+J11,Industry,Transport Infrastructure Operator
+J111,Sub Industry,Airport Operators
+J112,Sub Industry,Highways & Railtracks
+J113,Sub Industry,Marine Ports & Services
+J2,Sub Sector,Heavy Constructions & Civil Engineering
+J21,Industry,Heavy Constructions & Civil Engineering
+J211,Sub Industry,Heavy Constructions & Civil Engineering
+J3,Sub Sector,Telecommunication
+J31,Industry,Telecommunication Service
+J311,Sub Industry,Wired Telecommunication Service
+J312,Sub Industry,Integrated Telecommunication Service
+J32,Industry,Wireless Telecommunication Services
+J321,Sub Industry,Wireless Telecommunication Services
+J4,Sub Sector,Utilities
+J41,Industry,Electric Utilities
+J411,Sub Industry,Electric Utilities
+J42,Industry,Gas Utilities
+J421,Sub Industry,Gas Utilities
+J43,Industry,Water Utilities
+J431,Sub Industry,Water Utilities
+K,Sector,Transportation & Logistic
+K1,Sub Sector,Transportation 
+K11,Industry,Airlines
+K111,Sub Industry,Airlines
+K12,Industry,Passenger Marine Transportation
+K121,Sub Industry,Passenger Marine Transportation
+K13,Industry,Passenger Land Transportation
+K131,Sub Industry,Rail
+K132,Sub Industry,Road Transportation
+K2,Sub Sector,Logistics & Deliveries
+K21,Industry,Logistics & Deliveries
+K211,Sub Industry,Logistics & Deliveries
+Z,Sector,Listed Investment Product
+Z1,Sub Sector,Investment Trusts
+Z11,Industry,Investment Trusts
+Z111,Sub Industry,Mutual Fund / ETFs
+Z112,Sub Industry,Real Estate Investment Trusts
+Z113,Sub Industry,Infrastructure Investment Trusts
+Z2,Sub Sector,Bonds
+Z21,Industry,Bonds
+Z211,Sub Industry,Government Bonds
+Z212,Sub Industry,Corporate Bonds
+A,Sector,Energy
