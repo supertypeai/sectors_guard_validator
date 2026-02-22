@@ -1,7 +1,22 @@
 import os
+import json
 from pydantic_settings import BaseSettings
-from pydantic import field_validator
+from pydantic_settings.sources import EnvSettingsSource
 from typing import List, Optional
+
+class _GracefulEnvSettingsSource(EnvSettingsSource):
+    def decode_complex_value(self, field_name, field, value):
+        try:
+            return super().decode_complex_value(field_name, field, value)
+        except (json.JSONDecodeError, ValueError):
+            # value is a non-JSON string: try comma-separated splitting
+            if isinstance(value, str):
+                stripped = value.strip()
+                if not stripped:
+                    return []
+                return [item.strip() for item in stripped.split(",") if item.strip()]
+            return value
+
 
 class Settings(BaseSettings): 
     # Database settings
@@ -54,28 +69,15 @@ class Settings(BaseSettings):
     # Optional Google Sheet CSV URL for backend fetch
     gsheet_csv_url: Optional[str] = os.getenv("GSHEET_CSV_URL")
 
-    # ── Validators ──────────────────────────────────────────────────────
-    # Intercept comma-separated strings BEFORE Pydantic tries json.loads()
-    @field_validator(
-        "default_email_recipients",
-        "daily_summary_recipients",
-        "cors_origins",
-        mode="before",
-    )
+    # ── Use our graceful env source instead of the default one ────────────
     @classmethod
-    def parse_comma_separated_list(cls, v):
-        if isinstance(v, str):
-            if not v.strip():
-                return []
-            return [item.strip() for item in v.split(",") if item.strip()]
-        return v or []
-
-    @field_validator("smtp_port", mode="before")
-    @classmethod
-    def parse_smtp_port(cls, v):
-        if isinstance(v, str) and not v.strip():
-            return 587
-        return v
+    def settings_customise_sources(cls, settings_cls, init_settings, env_settings, dotenv_settings, file_secret_settings):
+        return (
+            init_settings,
+            _GracefulEnvSettingsSource(settings_cls),
+            dotenv_settings,
+            file_secret_settings,
+        )
 
     def get_cors_origins(self) -> List[str]:
         """Get properly configured CORS origins including production defaults"""
