@@ -8,7 +8,7 @@ import time
 import json
 import os
 import httpx
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from ..database.connection import get_supabase_client
 from ..validators.idx_financial_validator import IDXFinancialValidator
@@ -1331,3 +1331,31 @@ async def get_github_actions_status():
                 "error": str(e)
             }
         }
+
+
+@dashboard_router.get("/cron-jobs")
+async def get_cron_job_run_details(
+    limit: int = Query(200, ge=1, le=1000, description="Max rows to return"),
+    status: Optional[str] = Query(None, description="Filter by status (e.g. succeeded, failed)"),
+):
+    """
+    Return recent rows from cron.job_run_details via the get_cron_job_run_details function
+    """
+    try:
+        supabase = get_supabase_client()
+        rpc_params: Dict[str, Any] = {"row_limit": limit}
+        if status:
+            rpc_params["status_filter"] = status
+
+        response = supabase.rpc("get_cron_job_run_details", rpc_params).execute()
+        rows = response.data or []
+        # filter only last week
+        seven_days_ago = (datetime.now() - timedelta(days=7)).isoformat()
+        rows = [row for row in rows if row.get("start_time") and row["start_time"] >= seven_days_ago]
+
+        # print(f"[cron-jobs] Returned {len(rows)} rows (limit={limit}, status_filter={status})")
+        return {"status": "success", "count": len(rows), "data": rows}
+
+    except Exception as e:
+        print(f"[cron-jobs] Error: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to fetch cron job details: {str(e)}")

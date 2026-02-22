@@ -272,6 +272,41 @@ class EmailHelper:
                 'error': str(e)
             }
 
+    async def send_weekly_cron_report(
+        self,
+        failed_runs: List[Dict[str, Any]],
+        week_start: str,
+        week_end: str,
+    ) -> bool:
+        """
+        Send weekly cron-job failure summary email.
+
+        Args:
+            failed_runs: List of failed cron run dicts from get_cron_job_run_details RPC.
+            week_start: ISO date string for start of reporting period.
+            week_end: ISO date string for end of reporting period.
+
+        Returns:
+            bool: True if email was sent successfully.
+        """
+        try:
+            success = await self.email_service.send_weekly_cron_report(
+                failed_runs=failed_runs,
+                week_start=week_start,
+                week_end=week_end,
+            )
+            if success:
+                logger.info(
+                    f"Weekly cron report sent: {len(failed_runs)} failed run(s) "
+                    f"for period {week_start} -> {week_end}"
+                )
+            else:
+                logger.error("Failed to send weekly cron report")
+            return success
+        except Exception as e:
+            logger.error(f"Error in send_weekly_cron_report: {e}")
+            return False
+
 # Global helper instance
 email_helper = EmailHelper()
 

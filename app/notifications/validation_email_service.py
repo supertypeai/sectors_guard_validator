@@ -923,6 +923,184 @@ class ValidationEmailService:
             logger.error(f"SMTP summary email failed for {recipient_email}: {e}")
             return False
 
+    async def send_weekly_cron_report(
+        self,
+        failed_runs: List[Dict[str, Any]],
+        week_start: str,
+        week_end: str,
+        recipient_emails: List[str] = None,
+    ) -> bool:
+        """Send weekly cron-job failure report via SES (SMTP fallback)."""
+        try:
+            if not recipient_emails:
+                recipient_emails = self._get_default_recipients()
+            if not recipient_emails:
+                logger.warning("No email recipients configured for weekly cron report")
+                return False
+
+            subject = (
+                f"Sectors Guard Weekly Cron Report – "
+                f"{len(failed_runs)} failed run(s) "
+                f"({week_start} → {week_end})"
+            )
+
+            for recipient_email in recipient_emails:
+                html_content = self._build_cron_report_email_html(
+                    failed_runs, week_start, week_end
+                )
+                # ── SES first, SMTP fallback ───────────────────────────────
+                sent = False
+                try:
+                    if all([self.aws_access_key_id, self.aws_secret_access_key, self.default_from_email]):
+                        ses_client = boto3.client(
+                            "ses",
+                            aws_access_key_id=self.aws_access_key_id,
+                            aws_secret_access_key=self.aws_secret_access_key,
+                            region_name=self.aws_region,
+                        )
+                        sender_fmt = format_email_with_display_name(self.default_from_email, self.default_from_name)
+                        msg = MIMEMultipart()
+                        msg["Subject"] = subject
+                        msg["From"] = sender_fmt
+                        msg["To"] = recipient_email
+                        msg.attach(MIMEText(html_content, "html"))
+                        ses_client.send_raw_email(
+                            Source=sender_fmt,
+                            Destinations=[recipient_email],
+                            RawMessage={"Data": msg.as_string()},
+                        )
+                        logger.info(f"Weekly cron report sent via SES to {recipient_email}")
+                        sent = True
+                    else:
+                        raise Exception("SES not configured – trying SMTP")
+                except Exception as ses_err:
+                    logger.warning(f"SES failed ({ses_err}), falling back to SMTP for {recipient_email}")
+                    try:
+                        import smtplib
+                        sender_fmt = format_email_with_display_name(
+                            self.smtp_username or self.default_from_email, self.default_from_name
+                        )
+                        msg = MIMEMultipart()
+                        msg["Subject"] = subject
+                        msg["From"] = sender_fmt
+                        msg["To"] = recipient_email
+                        msg.attach(MIMEText(html_content, "html"))
+                        with smtplib.SMTP(self.smtp_server, self.smtp_port) as server:
+                            server.starttls()
+                            server.login(self.smtp_username, self.smtp_password)
+                            server.send_message(msg)
+                        logger.info(f"Weekly cron report sent via SMTP to {recipient_email}")
+                        sent = True
+                    except Exception as smtp_err:
+                        logger.error(f"SMTP also failed for {recipient_email}: {smtp_err}")
+
+            return sent
+
+        except Exception as e:
+            logger.error(f"Error sending weekly cron report: {e}")
+            return False
+
+    def _build_cron_report_email_html(
+        self,
+        failed_runs: List[Dict[str, Any]],
+        week_start: str,
+        week_end: str,
+    ) -> str:
+        """Build HTML email body for the weekly cron-job failure report."""
+        run_count = len(failed_runs)
+        generated_at = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+
+        # Build table rows
+        rows_html = ""
+        if run_count == 0:
+            rows_html = """
+            <tr>
+              <td colspan="4" style="padding:20px;text-align:center;color:#6b7280;font-style:italic;">
+                No failed runs this week – all good! 🎉
+              </td>
+            </tr>"""
+        else:
+            for run in failed_runs:
+                end_time = run.get("end_time", "") or ""
+                try:
+                    end_time_fmt = datetime.fromisoformat(end_time.replace("Z", "+00:00")).strftime("%Y-%m-%d %H:%M UTC")
+                except Exception:
+                    end_time_fmt = end_time or "—"
+
+                return_msg = str(run.get("return_message") or "—")
+                # Truncate very long messages for readability in email
+                if len(return_msg) > 300:
+                    return_msg = return_msg[:297] + "…"
+
+                rows_html += f"""
+            <tr style="border-bottom:1px solid #f3f4f6;">
+              <td style="padding:12px 14px;font-family:monospace;font-size:13px;color:#374151;">{run.get('job_pid','—')}</td>
+              <td style="padding:12px 14px;font-family:monospace;font-size:13px;color:#374151;">{run.get('runid','—')}</td>
+              <td style="padding:12px 14px;font-size:13px;color:#374151;white-space:nowrap;">{end_time_fmt}</td>
+              <td style="padding:12px 14px;font-size:13px;color:#ef4444;word-break:break-word;max-width:340px;">{return_msg}</td>
+            </tr>"""
+
+        status_color = "#ef4444" if run_count > 0 else "#10b981"
+        status_label = f"{run_count} failed run(s)" if run_count > 0 else "No failures"
+
+        return f"""<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1.0">
+  <title>Weekly Cron Report</title>
+</head>
+<body style="margin:0;padding:0;background:#f1f5f9;font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;">
+  <table role="presentation" style="width:100%;background:#f1f5f9;" cellpadding="0" cellspacing="0" border="0">
+    <tr><td align="center" style="padding:30px 16px;">
+      <div style="max-width:860px;width:100%;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 10px 25px rgba(0,0,0,.09);">
+
+        <!-- Header -->
+        <div style="background:linear-gradient(135deg,#1e3a8a 0%,#3b82f6 100%);padding:36px 32px;text-align:center;">
+          <p style="margin:0 0 8px;font-size:12px;color:rgba(255,255,255,.7);text-transform:uppercase;letter-spacing:1px;">Sectors Guard</p>
+          <h1 style="margin:0;font-size:26px;font-weight:700;color:#fff;">Weekly Cron Job Report</h1>
+          <p style="margin:10px 0 0;font-size:14px;color:rgba(255,255,255,.8);">{week_start} &nbsp;→&nbsp; {week_end}</p>
+        </div>
+
+        <!-- Summary banner -->
+        <div style="background:#f8fafc;border-bottom:1px solid #e2e8f0;padding:20px 32px;display:flex;align-items:center;">
+          <span style="display:inline-block;background:{status_color};color:#fff;font-weight:700;font-size:13px;padding:6px 18px;border-radius:999px;margin-right:16px;">{status_label}</span>
+          <span style="font-size:13px;color:#6b7280;">Period: <strong>{week_start}</strong> – <strong>{week_end}</strong> &nbsp;|&nbsp; Generated: {generated_at}</span>
+        </div>
+
+        <!-- Table -->
+        <div style="padding:28px 32px;">
+          <h2 style="margin:0 0 16px;font-size:16px;font-weight:600;color:#1e293b;">Failed Runs</h2>
+          <div style="overflow-x:auto;">
+            <table role="presentation" style="width:100%;border-collapse:collapse;font-size:14px;" cellpadding="0" cellspacing="0">
+              <thead>
+                <tr style="background:#f1f5f9;">
+                  <th style="padding:12px 14px;text-align:left;font-weight:600;color:#64748b;font-size:12px;text-transform:uppercase;letter-spacing:.5px;white-space:nowrap;">Job PID</th>
+                  <th style="padding:12px 14px;text-align:left;font-weight:600;color:#64748b;font-size:12px;text-transform:uppercase;letter-spacing:.5px;white-space:nowrap;">Job ID&nbsp;(runid)</th>
+                  <th style="padding:12px 14px;text-align:left;font-weight:600;color:#64748b;font-size:12px;text-transform:uppercase;letter-spacing:.5px;white-space:nowrap;">End Time</th>
+                  <th style="padding:12px 14px;text-align:left;font-weight:600;color:#64748b;font-size:12px;text-transform:uppercase;letter-spacing:.5px;">Return Message</th>
+                </tr>
+              </thead>
+              <tbody style="background:#fff;">{rows_html}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Footer -->
+        <div style="background:#f8fafc;border-top:1px solid #e2e8f0;padding:20px 32px;text-align:center;">
+          <p style="margin:0;font-size:12px;color:#94a3b8;">
+            This report is generated automatically every week by <strong>Sectors Guard</strong>.<br>
+            To change recipients set the <code>DEFAULT_EMAIL_RECIPIENTS</code> environment variable.
+          </p>
+        </div>
+
+      </div>
+    </td></tr>
+  </table>
+</body>
+</html>"""
+
     async def _get_email_recipients(self, table_name: str) -> List[str]:
         """Get email recipients for a specific table from validation_configs table"""
         try:
