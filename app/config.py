@@ -26,11 +26,13 @@ class Settings(BaseSettings):
     default_from_email: Optional[str] = os.getenv("DEFAULT_FROM_EMAIL")
     default_from_name: str = os.getenv("DEFAULT_FROM_NAME", "Sectors Guard")
     
-    # Default email recipients
-    default_email_recipients: List[str] = []
-    default_email_recipients_raw: str = os.getenv("DEFAULT_EMAIL_RECIPIENTS", "")
-    daily_summary_recipients: List[str] = []
-    daily_summary_recipients_raw: str = os.getenv("DAILY_SUMMARY_RECIPIENTS", "")
+    # Default email recipients (parsed manually in __init__)
+    from pydantic import Field
+    default_email_recipients: List[str] = Field(default_factory=list, exclude=True)
+    default_email_recipients_raw: str = Field(default="", alias="DEFAULT_EMAIL_RECIPIENTS")
+    
+    daily_summary_recipients: List[str] = Field(default_factory=list, exclude=True)
+    daily_summary_recipients_raw: str = Field(default="", alias="DAILY_SUMMARY_RECIPIENTS")
     
     # Validation settings
     default_error_threshold: int = 5
