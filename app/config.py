@@ -28,7 +28,9 @@ class Settings(BaseSettings):
     
     # Default email recipients
     default_email_recipients: List[str] = []
+    default_email_recipients_raw: str = os.getenv("DEFAULT_EMAIL_RECIPIENTS", "")
     daily_summary_recipients: List[str] = []
+    daily_summary_recipients_raw: str = os.getenv("DAILY_SUMMARY_RECIPIENTS", "")
     
     # Validation settings
     default_error_threshold: int = 5
@@ -84,16 +86,16 @@ class Settings(BaseSettings):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         
-        # Parse email recipients from environment variables
-        if os.getenv("DEFAULT_EMAIL_RECIPIENTS"):
+        # Parse email recipients from raw strings
+        if self.default_email_recipients_raw:
             self.default_email_recipients = [
-                email.strip() for email in os.getenv("DEFAULT_EMAIL_RECIPIENTS", "").split(",")
+                email.strip() for email in self.default_email_recipients_raw.split(",")
                 if email.strip()
             ]
         
-        if os.getenv("DAILY_SUMMARY_RECIPIENTS"):
+        if self.daily_summary_recipients_raw:
             self.daily_summary_recipients = [
-                email.strip() for email in os.getenv("DAILY_SUMMARY_RECIPIENTS", "").split(",")
+                email.strip() for email in self.daily_summary_recipients_raw.split(",")
                 if email.strip()
             ]
             
