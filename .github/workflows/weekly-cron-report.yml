@@ -1,0 +1,114 @@
+name: Weekly Cron Job Failure Report
+
+on:
+  schedule:
+    - cron: '0 16 28 * *'  # Every day at 16:28 UTC
+  workflow_dispatch:
+    inputs:
+      days_back:
+        description: 'How many days back to look for failures (default: 7)'
+        required: false
+        default: '7'
+
+env:
+  PYTHON_VERSION: '3.11'
+
+jobs:
+  weekly-cron-report:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        working-directory: sectors_guard_be
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Set environment variables
+        run: |
+          echo "SUPABASE_URL=${{ secrets.SUPABASE_URL }}"             >> $GITHUB_ENV
+          echo "SUPABASE_KEY=${{ secrets.SUPABASE_KEY }}"             >> $GITHUB_ENV
+          echo "AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }}"   >> $GITHUB_ENV
+          echo "AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }}" >> $GITHUB_ENV
+          echo "AWS_REGION=${{ secrets.AWS_REGION }}"                 >> $GITHUB_ENV
+          echo "DEFAULT_FROM_EMAIL=${{ secrets.DEFAULT_FROM_EMAIL }}" >> $GITHUB_ENV
+          echo "DEFAULT_FROM_NAME=${{ secrets.DEFAULT_FROM_NAME }}"   >> $GITHUB_ENV
+          echo "DEFAULT_EMAIL_RECIPIENTS=${{ secrets.DEFAULT_EMAIL_RECIPIENTS }}" >> $GITHUB_ENV
+          echo "SMTP_SERVER=${{ secrets.SMTP_SERVER }}"               >> $GITHUB_ENV
+          echo "SMTP_PORT=${{ secrets.SMTP_PORT }}"                   >> $GITHUB_ENV
+          echo "SMTP_USERNAME=${{ secrets.SMTP_USERNAME }}"           >> $GITHUB_ENV
+          echo "SMTP_PASSWORD=${{ secrets.SMTP_PASSWORD }}"           >> $GITHUB_ENV
+
+      - name: Send weekly cron failure report
+        working-directory: sectors_guard_be
+        run: |
+          python -c "
+          import asyncio, sys, os
+          from datetime import datetime, timedelta, timezone
+
+          sys.path.append('.')
+
+          from app.database.connection import get_supabase_client
+          from app.notifications.email_helper import EmailHelper
+
+          DAYS_BACK = int('${{ github.event.inputs.days_back }}' or '7')
+
+          async def run():
+              supabase = get_supabase_client()
+              helper   = EmailHelper()
+
+              now       = datetime.now(timezone.utc)
+              week_end  = now.date()
+              week_start = (now - timedelta(days=DAYS_BACK)).date()
+
+              print(f'Querying failed cron runs: {week_start} → {week_end}')
+
+              # Fetch up to 1 000 failed runs via the Supabase RPC (HTTPS, no port-5432 needed)
+              try:
+                  resp = supabase.rpc(
+                      'get_cron_job_run_details',
+                      {'row_limit': 1000, 'status_filter': 'failed'}
+                  ).execute()
+                  all_failed = resp.data or []
+              except Exception as e:
+                  print(f'::error::RPC call failed: {e}')
+                  sys.exit(1)
+
+              # Filter to the reporting window
+              def in_window(run):
+                  ts = run.get('end_time') or run.get('start_time') or ''
+                  if not ts:
+                      return True  # include if no timestamp
+                  try:
+                      dt = datetime.fromisoformat(ts.replace('Z', '+00:00'))
+                      return week_start <= dt.date() <= week_end
+                  except Exception:
+                      return True
+
+              failed_runs = [r for r in all_failed if in_window(r)]
+
+              print(f'Failed runs in window: {len(failed_runs)} (out of {len(all_failed)} total failed)')
+
+              # Always send the report (even if 0 failures = healthy week)
+              success = await helper.send_weekly_cron_report(
+                  failed_runs=failed_runs,
+                  week_start=str(week_start),
+                  week_end=str(week_end),
+              )
+
+              if success:
+                  print('Weekly cron report email sent successfully.')
+              else:
+                  print('::error::Failed to send weekly cron report email.')
+                  sys.exit(1)
+
+          asyncio.run(run())
+          "
