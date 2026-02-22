@@ -14,8 +14,7 @@ class Settings(BaseSettings):
     
     # Email settings
     smtp_server: str = os.getenv("SMTP_SERVER", "smtp.gmail.com")
-    smtp_port_env = os.getenv("SMTP_PORT")
-    smtp_port = int(smtp_port_env) if smtp_port_env else 587
+    smtp_port: int = 587
     smtp_username: Optional[str] = os.getenv("SMTP_USERNAME")
     smtp_password: Optional[str] = os.getenv("SMTP_PASSWORD")
     from_email: Optional[str] = os.getenv("FROM_EMAIL")
@@ -97,6 +96,11 @@ class Settings(BaseSettings):
                 email.strip() for email in os.getenv("DAILY_SUMMARY_RECIPIENTS", "").split(",")
                 if email.strip()
             ]
+            
+        # Parse smtp_port from environment variables, handling empty strings safely
+        smtp_port_env = os.getenv("SMTP_PORT")
+        if smtp_port_env:
+            self.smtp_port = int(smtp_port_env)
         
         # Set from_email to smtp_username if not specified
         if not self.from_email and self.smtp_username:
