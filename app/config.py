@@ -1,5 +1,6 @@
 import os
 from pydantic_settings import BaseSettings
+from pydantic import field_validator
 from typing import List, Optional
 
 class Settings(BaseSettings): 
@@ -26,13 +27,9 @@ class Settings(BaseSettings):
     default_from_email: Optional[str] = os.getenv("DEFAULT_FROM_EMAIL")
     default_from_name: str = os.getenv("DEFAULT_FROM_NAME", "Sectors Guard")
     
-    # Default email recipients (parsed manually in __init__)
-    from pydantic import Field
-    default_email_recipients: List[str] = Field(default_factory=list, exclude=True)
-    default_email_recipients_raw: str = Field(default="", alias="DEFAULT_EMAIL_RECIPIENTS")
-    
-    daily_summary_recipients: List[str] = Field(default_factory=list, exclude=True)
-    daily_summary_recipients_raw: str = Field(default="", alias="DAILY_SUMMARY_RECIPIENTS")
+    # Default email recipients
+    default_email_recipients: List[str] = []
+    daily_summary_recipients: List[str] = []
     
     # Validation settings
     default_error_threshold: int = 5
@@ -56,7 +53,30 @@ class Settings(BaseSettings):
 
     # Optional Google Sheet CSV URL for backend fetch
     gsheet_csv_url: Optional[str] = os.getenv("GSHEET_CSV_URL")
-    
+
+    # ── Validators ──────────────────────────────────────────────────────
+    # Intercept comma-separated strings BEFORE Pydantic tries json.loads()
+    @field_validator(
+        "default_email_recipients",
+        "daily_summary_recipients",
+        "cors_origins",
+        mode="before",
+    )
+    @classmethod
+    def parse_comma_separated_list(cls, v):
+        if isinstance(v, str):
+            if not v.strip():
+                return []
+            return [item.strip() for item in v.split(",") if item.strip()]
+        return v or []
+
+    @field_validator("smtp_port", mode="before")
+    @classmethod
+    def parse_smtp_port(cls, v):
+        if isinstance(v, str) and not v.strip():
+            return 587
+        return v
+
     def get_cors_origins(self) -> List[str]:
         """Get properly configured CORS origins including production defaults"""
         default_origins = [
@@ -88,19 +108,6 @@ class Settings(BaseSettings):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         
-        # Parse email recipients from raw strings
-        if self.default_email_recipients_raw:
-            self.default_email_recipients = [
-                email.strip() for email in self.default_email_recipients_raw.split(",")
-                if email.strip()
-            ]
-        
-        if self.daily_summary_recipients_raw:
-            self.daily_summary_recipients = [
-                email.strip() for email in self.daily_summary_recipients_raw.split(",")
-                if email.strip()
-            ]
-            
         # Parse smtp_port from environment variables, handling empty strings safely
         smtp_port_env = os.getenv("SMTP_PORT")
         if smtp_port_env:
