@@ -5,6 +5,12 @@ from pydantic_settings.sources import EnvSettingsSource
 from typing import List, Optional
 
 class _GracefulEnvSettingsSource(EnvSettingsSource):
+    def prepare_field_value(self, field_name, field, value, value_is_complex):
+        # Handle empty strings for non-complex fields (e.g. smtp_port: int = 587)
+        if not value_is_complex and isinstance(value, str) and value.strip() == '':
+            return None  # let pydantic use the field default
+        return super().prepare_field_value(field_name, field, value, value_is_complex)
+
     def decode_complex_value(self, field_name, field, value):
         try:
             return super().decode_complex_value(field_name, field, value)
@@ -58,7 +64,7 @@ class Settings(BaseSettings):
     # CORS settings
     frontend_url: str = os.getenv("FRONTEND_URL", "http://localhost:3000")
 
-    password: str = os.getenv("PASSWORD")
+    password: Optional[str] = os.getenv("PASSWORD")
 
     # Additional CORS origins (comma-separated) or defaults
     cors_origins: List[str] = []
