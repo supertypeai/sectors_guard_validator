@@ -250,7 +250,7 @@ class IDXFinancialValidator(DataValidator):
                 start_date = (today - timedelta(days=365)).isoformat()
                 end_date = today.isoformat()
             elif query_table == 'idx_filings' and not start_date and not end_date:
-                start_date = (today - timedelta(days=125)).isoformat()
+                start_date = (today - timedelta(days=90)).isoformat()
                 end_date = today.isoformat()
             elif query_table in ['idx_financial_sheets_annual', 'idx_financial_sheets_quarterly'] and not start_date and not end_date:
                 # Default to last 2 years for financial sheets
@@ -282,6 +282,10 @@ class IDXFinancialValidator(DataValidator):
                         query = query.lte(date_filter_column, end_val)
                 except Exception as err:
                     print(f"⚠️  [Validator] Failed to apply server-side date filters for {table_name}.{date_filter_column}: {err}")
+
+            # Limit to 600 rows with the newest timestamps for idx_filings
+            if query_table == 'idx_filings':
+                query = query.order('timestamp', desc=True).limit(600)
 
             # Execute base query
             try:
