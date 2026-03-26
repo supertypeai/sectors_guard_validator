@@ -31,6 +31,7 @@ class IDXFinancialValidator(DataValidator):
             'idx_all_time_price': self._validate_all_time_price,
             'idx_filings': self._validate_filings,
             'idx_stock_split': self._validate_stock_split,
+            'idx_agm': self._validate_agm,
             'idx_news': self._validate_news,
             'sgx_company_report': self._validate_sgx_company_report,
             'sgx_manual_input': self._validate_sgx_manual_input,
@@ -270,6 +271,8 @@ class IDXFinancialValidator(DataValidator):
                 date_filter_column = 'date'
             elif query_table == 'idx_filings':
                 date_filter_column = 'timestamp'
+            elif query_table == 'idx_agm':
+                date_filter_column = 'agm_date'
 
             # If we have a target column and a start/end, apply inclusive filters
             if date_filter_column and (start_date or end_date):
@@ -2328,6 +2331,68 @@ class IDXFinancialValidator(DataValidator):
                 "message": f"Error validating stock split data: {str(e)}",
                 "severity": "flagged"
             })
+        return {"anomalies": anomalies}
+
+    async def _validate_agm(self, data: pd.DataFrame) -> Dict[str, Any]:
+        """
+        Validate idx_agm table
+        Rule: recording_date must be earlier than agm_date.
+        """
+        anomalies: List[Dict[str, Any]] = []
+        try:
+            required_cols = ['recording_date', 'agm_date']
+            missing_cols = [col for col in required_cols if col not in data.columns]
+            if missing_cols:
+                anomalies.append({
+                    "type": "missing_required_columns",
+                    "columns": missing_cols,
+                    "message": f"Missing required columns: {', '.join(missing_cols)}",
+                    "severity": "flagged"
+                })
+                return {"anomalies": anomalies}
+
+            x = data.copy()
+            x['recording_date'] = pd.to_datetime(x['recording_date'], errors='coerce')
+            x['agm_date'] = pd.to_datetime(x['agm_date'], errors='coerce')
+
+            for idx, row in x.iterrows():
+                record_id = row.get('id')
+                symbol = row.get('symbol')
+                recording_date = row.get('recording_date')
+                agm_date = row.get('agm_date')
+
+                if pd.isna(recording_date) or pd.isna(agm_date):
+                    anomalies.append({
+                        "type": "invalid_or_missing_dates",
+                        "row_index": int(idx),
+                        "id": record_id,
+                        "symbol": symbol,
+                        "recording_date": self._to_json_serializable(recording_date),
+                        "agm_date": self._to_json_serializable(agm_date),
+                        "message": "recording_date and agm_date must both be present and valid dates",
+                        "severity": "flagged"
+                    })
+                    continue
+
+                if recording_date >= agm_date:
+                    anomalies.append({
+                        "type": "invalid_recording_date_order",
+                        "row_index": int(idx),
+                        "id": record_id,
+                        "symbol": symbol,
+                        "recording_date": recording_date.strftime('%Y-%m-%d'),
+                        "agm_date": agm_date.strftime('%Y-%m-%d'),
+                        "date": agm_date.strftime('%Y-%m-%d'),
+                        "message": "recording_date must be earlier than agm_date",
+                        "severity": "flagged"
+                    })
+        except Exception as e:
+            anomalies.append({
+                "type": "validation_error",
+                "message": f"Error validating idx_agm data: {str(e)}",
+                "severity": "flagged"
+            })
+
         return {"anomalies": anomalies}
 
     async def _validate_news(self, data: pd.DataFrame) -> Dict[str, Any]:

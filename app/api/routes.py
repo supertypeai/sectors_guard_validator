@@ -95,6 +95,12 @@ async def get_tables():
                 "rules": "Multiple stock splits within 2 weeks for same symbol"
             },
             {
+                "name": "idx_agm",
+                "description": "AGM schedule integrity validation",
+                "validation_type": "AGM Date Validation",
+                "rules": "recording_date must be earlier than agm_date"
+            },
+            {
                 "name": "idx_news",
                 "description": "News table subsector tagging validation",
                 "validation_type": "News Subsector Validation",
@@ -668,7 +674,7 @@ async def get_dashboard_stats():
         all_tables = [
             "idx_combine_financials_annual", "idx_combine_financials_quarterly", 
             "idx_daily_data", "idx_daily_data_completeness", "idx_dividend", "idx_all_time_price", 
-            "idx_filings", "idx_stock_split", "idx_news", "sgx_company_report", "sgx_manual_input", 
+            "idx_filings", "idx_stock_split", "idx_agm", "idx_news", "sgx_company_report", "sgx_manual_input", 
             "idx_company_profile", "idx_sector_reports",
             "idx_financial_sheets_annual", "idx_financial_sheets_quarterly", "sgx_filings", "rpc_functions"
         ]
@@ -1032,7 +1038,7 @@ async def get_table_status():
         all_tables = [
             "idx_combine_financials_annual", "idx_combine_financials_quarterly", 
             "idx_daily_data", "idx_daily_data_completeness", "idx_dividend", "idx_all_time_price", 
-            "idx_filings", "idx_stock_split"
+            "idx_filings", "idx_stock_split", "idx_agm"
         ]
         
         healthy = 0
