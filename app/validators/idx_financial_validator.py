@@ -253,12 +253,14 @@ class IDXFinancialValidator(DataValidator):
             elif query_table == 'idx_filings' and not start_date and not end_date:
                 start_date = (today - timedelta(days=90)).isoformat()
                 end_date = today.isoformat()
+            elif query_table == 'idx_agm' and not start_date and not end_date:
+                # Validate only last 3 months where recording_date OR agm_date is in range
+                start_date = (today - timedelta(days=90)).isoformat()
+                end_date = today.isoformat()
             elif query_table in ['idx_financial_sheets_annual', 'idx_financial_sheets_quarterly'] and not start_date and not end_date:
                 # Default to last 2 years for financial sheets
                 start_date = (today - timedelta(days=730)).isoformat()
                 end_date = today.isoformat()
-
-            query = self.supabase.table(query_table).select("*")
 
             # Apply date filters at the database level when possible
             # Map known tables to their date/timestamp columns
@@ -271,34 +273,75 @@ class IDXFinancialValidator(DataValidator):
                 date_filter_column = 'date'
             elif query_table == 'idx_filings':
                 date_filter_column = 'timestamp'
-            elif query_table == 'idx_agm':
-                date_filter_column = 'agm_date'
 
-            # If we have a target column and a start/end, apply inclusive filters
-            if date_filter_column and (start_date or end_date):
+            # For idx_agm, emulate OR filtering with two compatible queries:
+            # (recording_date in range) OR (agm_date in range)
+            if query_table == 'idx_agm' and (start_date or end_date):
+                def _fetch_agm_by_date_column(date_col: str) -> List[Dict[str, Any]]:
+                    q = self.supabase.table(query_table).select("*")
+                    if start_date:
+                        q = q.gte(date_col, start_date)
+                    if end_date:
+                        q = q.lte(date_col, end_date)
+                    try:
+                        resp = q.execute()
+                        return getattr(resp, 'data', None) or []
+                    except Exception as err:
+                        print(f"⚠️  [Validator] Failed idx_agm query on {date_col}: {err}")
+                        return []
+
+                rec_rows = _fetch_agm_by_date_column('recording_date')
+                agm_rows = _fetch_agm_by_date_column('agm_date')
+
+                # Merge and deduplicate rows
+                merged_rows: List[Dict[str, Any]] = []
+                seen = set()
+                for row in rec_rows + agm_rows:
+                    if not isinstance(row, dict):
+                        continue
+                    row_id = row.get('id')
+                    if row_id is not None:
+                        dedupe_key = ('id', row_id)
+                    else:
+                        dedupe_key = (
+                            row.get('symbol'),
+                            str(row.get('recording_date')),
+                            str(row.get('agm_date'))
+                        )
+                    if dedupe_key in seen:
+                        continue
+                    seen.add(dedupe_key)
+                    merged_rows.append(row)
+
+                df = pd.DataFrame(merged_rows) if merged_rows else pd.DataFrame()
+            else:
+                query = self.supabase.table(query_table).select("*")
+
+                # If we have a target column and a start/end, apply inclusive filters
+                if date_filter_column and (start_date or end_date):
+                    try:
+                        start_val = start_date
+                        end_val = end_date
+                        if start_val:
+                            query = query.gte(date_filter_column, start_val)
+                        if end_val:
+                            query = query.lte(date_filter_column, end_val)
+                    except Exception as err:
+                        print(f"⚠️  [Validator] Failed to apply server-side date filters for {table_name}.{date_filter_column}: {err}")
+
+                # Limit to 600 rows with the newest timestamps for idx_filings
+                if query_table == 'idx_filings':
+                    query = query.order('timestamp', desc=True).limit(600)
+
+                # Execute base query
                 try:
-                    start_val = start_date
-                    end_val = end_date
-                    if start_val:
-                        query = query.gte(date_filter_column, start_val)
-                    if end_val:
-                        query = query.lte(date_filter_column, end_val)
+                    response = query.execute()
+                    raw_data = getattr(response, 'data', None)
+                    # print(f"🧪 [Validator] Raw response type={type(raw_data)} length={len(raw_data) if raw_data is not None else 'None'}")
                 except Exception as err:
-                    print(f"⚠️  [Validator] Failed to apply server-side date filters for {table_name}.{date_filter_column}: {err}")
-
-            # Limit to 600 rows with the newest timestamps for idx_filings
-            if query_table == 'idx_filings':
-                query = query.order('timestamp', desc=True).limit(600)
-
-            # Execute base query
-            try:
-                response = query.execute()
-                raw_data = getattr(response, 'data', None)
-                # print(f"🧪 [Validator] Raw response type={type(raw_data)} length={len(raw_data) if raw_data is not None else 'None'}")
-            except Exception as err:
-                print(f"❌ [Validator] Supabase query error for {query_table} (alias of {table_name}): {err}")
-                raw_data = None
-            df = pd.DataFrame(raw_data) if raw_data else pd.DataFrame()
+                    print(f"❌ [Validator] Supabase query error for {query_table} (alias of {table_name}): {err}")
+                    raw_data = None
+                df = pd.DataFrame(raw_data) if raw_data else pd.DataFrame()
 
             # Client-side top 50 by market cap only
             if table_name == 'sgx_company_report' and not df.empty:
@@ -383,6 +426,31 @@ class IDXFinancialValidator(DataValidator):
                                 df = df[df[col] < (end_dt + pd.Timedelta(days=1))]
                             else:
                                 df = df[df[col] <= end_dt]
+
+                # Additional client-side fallback for idx_agm: filter by recording_date OR agm_date window.
+                if query_table == 'idx_agm' and (start_date or end_date) and not df.empty:
+                    start_dt = pd.to_datetime(start_date) if start_date else None
+                    end_dt = pd.to_datetime(end_date) if end_date else None
+
+                    def _build_window_mask(series: pd.Series) -> pd.Series:
+                        mask = pd.Series(True, index=series.index)
+                        if start_dt is not None:
+                            mask = mask & (series >= start_dt)
+                        if end_dt is not None:
+                            mask = mask & (series <= end_dt)
+                        return mask
+
+                    rec_mask = pd.Series(False, index=df.index)
+                    agm_mask = pd.Series(False, index=df.index)
+
+                    if 'recording_date' in df.columns:
+                        rec_dates = pd.to_datetime(df['recording_date'], errors='coerce')
+                        rec_mask = _build_window_mask(rec_dates)
+                    if 'agm_date' in df.columns:
+                        agm_dates = pd.to_datetime(df['agm_date'], errors='coerce')
+                        agm_mask = _build_window_mask(agm_dates)
+
+                    df = df[rec_mask | agm_mask]
             except Exception as err:
                 print(f"⚠️  [Validator] Failed to apply client-side date filter for {table_name}: {err}")
             
@@ -2336,11 +2404,14 @@ class IDXFinancialValidator(DataValidator):
     async def _validate_agm(self, data: pd.DataFrame) -> Dict[str, Any]:
         """
         Validate idx_agm table
-        Rule: recording_date must be earlier than agm_date.
+        Rules:
+        1. recording_date must be earlier than agm_date
+        2. duplicate agm_date is not allowed for the same symbol
+        3. agm_place and agm_place_desc must not be empty for AGM dates in the past 7 days
         """
         anomalies: List[Dict[str, Any]] = []
         try:
-            required_cols = ['recording_date', 'agm_date']
+            required_cols = ['symbol', 'recording_date', 'agm_date', 'agm_place', 'agm_place_desc']
             missing_cols = [col for col in required_cols if col not in data.columns]
             if missing_cols:
                 anomalies.append({
@@ -2354,12 +2425,24 @@ class IDXFinancialValidator(DataValidator):
             x = data.copy()
             x['recording_date'] = pd.to_datetime(x['recording_date'], errors='coerce')
             x['agm_date'] = pd.to_datetime(x['agm_date'], errors='coerce')
+            jakarta_tz = pytz.timezone('Asia/Jakarta')
+            today = pd.Timestamp(datetime.now(jakarta_tz).date())
+
+            def _is_blank(val: Any) -> bool:
+                if val is None:
+                    return True
+                if isinstance(val, str):
+                    cleaned = val.strip()
+                    return cleaned == '' or cleaned.lower() in ('null', 'none', 'nan')
+                return pd.isna(val)
 
             for idx, row in x.iterrows():
                 record_id = row.get('id')
                 symbol = row.get('symbol')
                 recording_date = row.get('recording_date')
                 agm_date = row.get('agm_date')
+                agm_place = row.get('agm_place')
+                agm_place_desc = row.get('agm_place_desc')
 
                 if pd.isna(recording_date) or pd.isna(agm_date):
                     anomalies.append({
@@ -2374,6 +2457,26 @@ class IDXFinancialValidator(DataValidator):
                     })
                     continue
 
+                # Only enforce AGM place fields for meetings in the past 7 days
+                agm_date_only = pd.Timestamp(agm_date).normalize()
+                days_since_agm = (today - agm_date_only).days
+                should_check_place = 0 <= days_since_agm <= 7
+
+                if should_check_place and (_is_blank(agm_place) or _is_blank(agm_place_desc)):
+                    anomalies.append({
+                        "type": "missing_agm_place_fields",
+                        "row_index": int(idx),
+                        "id": record_id,
+                        "symbol": symbol,
+                        "agm_place": self._to_json_serializable(agm_place),
+                        "agm_place_desc": self._to_json_serializable(agm_place_desc),
+                        "agm_date": agm_date.strftime('%Y-%m-%d') if isinstance(agm_date, (pd.Timestamp, datetime)) else self._to_json_serializable(agm_date),
+                        "date": agm_date.strftime('%Y-%m-%d') if isinstance(agm_date, (pd.Timestamp, datetime)) else self._to_json_serializable(agm_date),
+                        "days_since_agm": int(days_since_agm),
+                        "message": "agm_place and agm_place_desc must both be filled when agm_date is in the past 7 days",
+                        "severity": "flagged"
+                    })
+
                 if recording_date >= agm_date:
                     anomalies.append({
                         "type": "invalid_recording_date_order",
@@ -2384,6 +2487,36 @@ class IDXFinancialValidator(DataValidator):
                         "agm_date": agm_date.strftime('%Y-%m-%d'),
                         "date": agm_date.strftime('%Y-%m-%d'),
                         "message": "recording_date must be earlier than agm_date",
+                        "severity": "flagged"
+                    })
+
+            # Duplicate check: one symbol cannot have multiple rows with the same agm_date
+            dup_source = x.copy()
+            dup_source['symbol_clean'] = dup_source['symbol'].astype(str).str.strip()
+            dup_source = dup_source[
+                dup_source['agm_date'].notna() &
+                dup_source['symbol_clean'].notna() &
+                (dup_source['symbol_clean'] != '')
+            ]
+
+            if not dup_source.empty:
+                grouped = dup_source.groupby(['symbol_clean', 'agm_date'], dropna=False)
+                for (sym, dt), grp in grouped:
+                    if len(grp) <= 1:
+                        continue
+                    date_str = dt.strftime('%Y-%m-%d') if isinstance(dt, (pd.Timestamp, datetime)) else str(dt)
+                    record_ids = []
+                    if 'id' in grp.columns:
+                        record_ids = [self._to_json_serializable(v) for v in grp['id'].tolist()]
+
+                    anomalies.append({
+                        "type": "duplicate_agm_date_per_symbol",
+                        "symbol": sym,
+                        "agm_date": date_str,
+                        "duplicate_count": int(len(grp)),
+                        "row_indexes": [int(i) for i in grp.index.tolist()],
+                        "record_ids": record_ids,
+                        "message": f"Duplicate agm_date detected for symbol {sym} on {date_str}",
                         "severity": "flagged"
                     })
         except Exception as e:

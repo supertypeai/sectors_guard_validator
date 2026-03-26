@@ -96,9 +96,9 @@ async def get_tables():
             },
             {
                 "name": "idx_agm",
-                "description": "AGM schedule integrity validation",
+                "description": "AGM schedule integrity and completeness validation",
                 "validation_type": "AGM Date Validation",
-                "rules": "recording_date must be earlier than agm_date"
+                "rules": "recording_date < agm_date; no duplicate agm_date per symbol; agm_place and agm_place_desc required for AGM dates in the past 7 days"
             },
             {
                 "name": "idx_news",
@@ -918,6 +918,20 @@ async def get_table_validation_config(table_name: str):
                     "time_window_threshold": 14,
                     "metrics": ["split_ratio", "date"],
                     "alert_condition": "multiple stock splits within 2 weeks for same symbol"
+                }
+            },
+            "idx_agm": {
+                "table_name": table_name,
+                "validation_type": "AGM Date Validation",
+                "description": "AGM date ordering, duplicate-date, and place completeness validation",
+                "rules": {
+                    "date_order_rule": "recording_date < agm_date",
+                    "duplicate_rule": "no duplicate agm_date for the same symbol",
+                    "place_required_rule": "agm_place and agm_place_desc must be filled for agm_date in the past 7 days",
+                    "place_required_window_days": 7,
+                    "metrics": ["symbol", "recording_date", "agm_date", "agm_place", "agm_place_desc"],
+                    "strict": True,
+                    "alert_condition": "invalid recording_date order, duplicate agm_date per symbol, or missing agm_place/agm_place_desc in past-7-days AGM records"
                 }
             },
             "sgx_company_report": {
