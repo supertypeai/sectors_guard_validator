@@ -8,7 +8,7 @@ on:
         required: false
         default: 'csv'
       csv_url:
-        description: 'Optional CSV export URL to override secret (not recommended for secrets)'
+        description: 'Optional CSV export URL to override secret'
         required: false
         default: ''
   schedule:

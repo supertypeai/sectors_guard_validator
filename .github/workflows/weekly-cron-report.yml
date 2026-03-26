@@ -2,7 +2,7 @@ name: Weekly Cron Job Failure Report
 
 on:
   schedule:
-    - cron: '0 16 28 * *'  # Every day at 16:28 UTC
+    - cron: '28 16 * * *'  # Every day at 16:28 UTC
   workflow_dispatch:
     inputs:
       days_back:
