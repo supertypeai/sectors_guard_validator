@@ -8,6 +8,8 @@ on:
     - cron: '0 2 16 3,4,6 *'
     # Quarterly financials - Monthly on the 1st at 3 AM UTC  
     - cron: '0 3 1 * *'
+    # AGM validation - Every Monday at 10 AM UTC+7 (3 AM UTC)
+    - cron: '0 3 * * 1'
     # Daily data - Weekly every Monday at 1 AM UTC
     - cron: '0 1 * * 1'
     # Dividend - Monthly on the 1st at 4 AM UTC
@@ -47,6 +49,7 @@ on:
           - 'alltime'
           - 'filings'
           - 'stocksplit'
+          - 'agm'
           - 'daily_completeness'
           - 'index_daily'
           - 'news'
@@ -116,6 +119,10 @@ jobs:
               validation_tables=idx_stock_split
               echo "validation_tables=$validation_tables" >> $GITHUB_OUTPUT
               ;;
+            "agm")
+              validation_tables=idx_agm
+              echo "validation_tables=$validation_tables" >> $GITHUB_OUTPUT
+              ;;
             "news")
               validation_tables=idx_news
               echo "validation_tables=$validation_tables" >> $GITHUB_OUTPUT
@@ -137,7 +144,7 @@ jobs:
               echo "validation_tables=$validation_tables" >> $GITHUB_OUTPUT
               ;;
             "all")
-              validation_tables=idx_combine_financials_annual,idx_combine_financials_quarterly,idx_daily_data,idx_daily_data_completeness,index_daily_data,idx_dividend,idx_all_time_price,idx_filings,idx_stock_split,idx_news,sgx_company_report,sgx_manual_input,idx_company_profile,sgx_filings
+              validation_tables=idx_combine_financials_annual,idx_combine_financials_quarterly,idx_daily_data,idx_daily_data_completeness,index_daily_data,idx_dividend,idx_all_time_price,idx_filings,idx_stock_split,idx_agm,idx_news,sgx_company_report,sgx_manual_input,idx_company_profile,sgx_filings
               echo "validation_tables=$validation_tables" >> $GITHUB_OUTPUT
               ;;
           esac
@@ -155,6 +162,10 @@ jobs:
           # Quarterly financials - Monthly on 1st at 3 AM UTC
           elif [ "${{ github.event.schedule }}" = "0 3 1 * *" ]; then
             validation_tables=idx_combine_financials_quarterly
+
+          # AGM validation - Every Monday at 10 AM UTC+7 (3 AM UTC)
+          elif [ "${{ github.event.schedule }}" = "0 3 * * 1" ]; then
+            validation_tables=idx_agm
             
           # Daily data - Weekly every Monday at 1 AM UTC
           elif [ "${{ github.event.schedule }}" = "0 1 * * 1" ]; then
@@ -253,7 +264,7 @@ jobs:
         api_token = os.getenv('BACKEND_API_TOKEN')
         
         # Retry configuration
-        MAX_RETRIES = 5
+        MAX_RETRIES = 3
         INITIAL_BACKOFF = 60  # seconds
         
         if not api_token:
