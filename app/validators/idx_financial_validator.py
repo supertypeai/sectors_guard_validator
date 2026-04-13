@@ -2052,7 +2052,7 @@ class IDXFinancialValidator(DataValidator):
         anomalies = []
         try:
             # Ensure required columns for price validation
-            required_cols = ['timestamp', 'tickers', 'price']
+            required_cols = ['timestamp', 'symbol', 'price']
             missing_cols = [col for col in required_cols if col not in data.columns]
             if missing_cols:
                 anomalies.append({
