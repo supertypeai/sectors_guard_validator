@@ -74,7 +74,13 @@ async def get_tables():
                 "name": "idx_dividend", 
                 "description": "Dividend data - Yield analysis and changes",
                 "validation_type": "Dividend Yield Analysis",
-                "rules": "Average yield ≥30% or yield change ≥10% per year"
+                "rules": "Average yield ≥30% or yield change ≥10% per year; dividend_original must be ≥ 1 rupiah"
+            },
+            {
+                "name": "idx_upcoming_dividend",
+                "description": "Upcoming dividend data - Minimum dividend amount validation",
+                "validation_type": "Upcoming Dividend Validation",
+                "rules": "dividend_amount must be ≥ 1 rupiah"
             },
             {
                 "name": "idx_all_time_price", 
@@ -886,8 +892,19 @@ async def get_table_validation_config(table_name: str):
                 "rules": {
                     "high_yield_threshold": 30,
                     "yield_change_threshold": 10,
-                    "metrics": ["yield", "dividend"],
-                    "alert_condition": "average yield ≥30% or yield change ≥10% per year"
+                    "min_dividend_original": 1,
+                    "metrics": ["yield", "dividend", "dividend_original"],
+                    "alert_condition": "average yield ≥30% or yield change ≥10% per year; dividend_original ≥ 1 rupiah"
+                }
+            },
+            "idx_upcoming_dividend": {
+                "table_name": table_name,
+                "validation_type": "Upcoming Dividend Validation",
+                "description": "Upcoming dividend amount minimum validation",
+                "rules": {
+                    "min_dividend_amount": 1,
+                    "metrics": ["dividend_amount"],
+                    "alert_condition": "dividend_amount must be ≥ 1 rupiah"
                 }
             },
             "idx_all_time_price": {
@@ -1051,7 +1068,7 @@ async def get_table_status():
         # Get latest validation results for each IDX table
         all_tables = [
             "idx_combine_financials_annual", "idx_combine_financials_quarterly", 
-            "idx_daily_data", "idx_daily_data_completeness", "idx_dividend", "idx_all_time_price", 
+            "idx_daily_data", "idx_daily_data_completeness", "idx_dividend", "idx_upcoming_dividend", "idx_all_time_price", 
             "idx_filings", "idx_stock_split", "idx_agm"
         ]
         
@@ -1113,6 +1130,7 @@ async def get_table_data(
             'idx_combine_financials_quarterly', 
             'idx_daily_data',
             'idx_dividend',
+            'idx_upcoming_dividend',
             'idx_all_time_price',
             'idx_stock_split',
             'idx_filings',

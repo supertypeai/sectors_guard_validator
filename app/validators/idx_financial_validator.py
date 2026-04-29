@@ -28,6 +28,7 @@ class IDXFinancialValidator(DataValidator):
             'idx_daily_data_completeness': self._validate_daily_data_completeness_and_coverage,
             'index_daily_data': self._validate_index_daily_data,
             'idx_dividend': self._validate_dividend,
+            'idx_upcoming_dividend': self._validate_upcoming_dividend,
             'idx_all_time_price': self._validate_all_time_price,
             'idx_filings': self._validate_filings,
             'idx_stock_split': self._validate_stock_split,
@@ -1768,6 +1769,7 @@ class IDXFinancialValidator(DataValidator):
         Conditions:
         1. average yield per year >= 30%
         2. yield (average) per year change >= 10%
+        3. dividend_original must be >= 1 rupiah
         """
         anomalies = []
         try:
@@ -1783,6 +1785,29 @@ class IDXFinancialValidator(DataValidator):
                     "severity": "flagged"
                 })
                 return {"anomalies": anomalies}
+
+            if 'dividend_original' not in data.columns:
+                anomalies.append({
+                    "type": "missing_required_columns",
+                    "columns": ['dividend_original'],
+                    "message": "Missing required column: dividend_original",
+                    "severity": "flagged"
+                })
+            else:
+                dividend_original = pd.to_numeric(data['dividend_original'], errors='coerce')
+                invalid_mask = dividend_original.notna() & (dividend_original < 1)
+                for idx in data[invalid_mask].index:
+                    date_val = data.loc[idx].get('date')
+                    date_str = date_val.strftime('%Y-%m-%d') if isinstance(date_val, (pd.Timestamp, datetime)) else date_val
+                    anomalies.append({
+                        "type": "invalid_dividend_original",
+                        "metric": "dividend_original",
+                        "message": "dividend_original must be >= 1 rupiah",
+                        "symbol": data.loc[idx].get('symbol'),
+                        "date": date_str,
+                        "value": float(dividend_original.loc[idx]) if pd.notna(dividend_original.loc[idx]) else None,
+                        "severity": "flagged"
+                    })
 
             # Parse dates with coercion so bad values become NaT (we will report these later)
             try:
@@ -1876,6 +1901,50 @@ class IDXFinancialValidator(DataValidator):
                 "message": f"Error validating dividend data: {str(e)}",
                 "severity": "flagged"
             })
+        return {"anomalies": anomalies}
+
+    async def _validate_upcoming_dividend(self, data: pd.DataFrame) -> Dict[str, Any]:
+        """
+        Validate idx_upcoming_dividend table
+        Rule: dividend_amount must be >= 1 rupiah
+        """
+        anomalies: List[Dict[str, Any]] = []
+        try:
+            if data is None or data.empty:
+                return {"anomalies": anomalies}
+
+            data = data.copy()
+            if 'dividend_amount' not in data.columns:
+                anomalies.append({
+                    "type": "missing_required_columns",
+                    "columns": ['dividend_amount'],
+                    "message": "Missing required column: dividend_amount",
+                    "severity": "flagged"
+                })
+                return {"anomalies": anomalies}
+
+            dividend_amount = pd.to_numeric(data['dividend_amount'], errors='coerce')
+            invalid_mask = dividend_amount.notna() & (dividend_amount < 1)
+            for idx in data[invalid_mask].index:
+                date_val = data.loc[idx].get('date')
+                date_str = date_val.strftime('%Y-%m-%d') if isinstance(date_val, (pd.Timestamp, datetime)) else date_val
+                anomalies.append({
+                    "type": "invalid_dividend_amount",
+                    "metric": "dividend_amount",
+                    "message": "dividend_amount must be >= 1 rupiah",
+                    "symbol": data.loc[idx].get('symbol'),
+                    "date": date_str,
+                    "value": float(dividend_amount.loc[idx]) if pd.notna(dividend_amount.loc[idx]) else None,
+                    "severity": "flagged"
+                })
+
+        except Exception as e:
+            anomalies.append({
+                "type": "validation_error",
+                "message": f"Error validating upcoming dividend data: {str(e)}",
+                "severity": "flagged"
+            })
+
         return {"anomalies": anomalies}
     
     async def _validate_all_time_price(self, data: pd.DataFrame) -> Dict[str, Any]:

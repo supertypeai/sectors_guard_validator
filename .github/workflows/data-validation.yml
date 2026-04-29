@@ -14,6 +14,8 @@ on:
     - cron: '0 1 * * 1'
     # Dividend - Monthly on the 1st at 4 AM UTC
     - cron: '0 4 1 * *'
+    # Upcoming dividend - Monthly on the 1st at 4:30 AM UTC
+    - cron: '30 4 1 * *'
     # All-time price - Daily at 5 AM UTC
     - cron: '0 5 * * *'
     # Filings - Daily at 9.15 AM UTC
@@ -46,6 +48,7 @@ on:
           - 'quarterly' 
           - 'daily'
           - 'dividend'
+          - 'upcoming_dividend'
           - 'alltime'
           - 'filings'
           - 'stocksplit'
@@ -107,6 +110,10 @@ jobs:
               validation_tables=idx_dividend
               echo "validation_tables=$validation_tables" >> $GITHUB_OUTPUT
               ;;
+            "upcoming_dividend")
+              validation_tables=idx_upcoming_dividend
+              echo "validation_tables=$validation_tables" >> $GITHUB_OUTPUT
+              ;;
             "alltime")
               validation_tables=idx_all_time_price
               echo "validation_tables=$validation_tables" >> $GITHUB_OUTPUT
@@ -144,7 +151,7 @@ jobs:
               echo "validation_tables=$validation_tables" >> $GITHUB_OUTPUT
               ;;
             "all")
-              validation_tables=idx_combine_financials_annual,idx_combine_financials_quarterly,idx_daily_data,idx_daily_data_completeness,index_daily_data,idx_dividend,idx_all_time_price,idx_filings,idx_stock_split,idx_agm,idx_news,sgx_company_report,sgx_manual_input,idx_company_profile,sgx_filings
+              validation_tables=idx_combine_financials_annual,idx_combine_financials_quarterly,idx_daily_data,idx_daily_data_completeness,index_daily_data,idx_dividend,idx_upcoming_dividend,idx_all_time_price,idx_filings,idx_stock_split,idx_agm,idx_news,sgx_company_report,sgx_manual_input,idx_company_profile,sgx_filings
               echo "validation_tables=$validation_tables" >> $GITHUB_OUTPUT
               ;;
           esac
@@ -174,6 +181,10 @@ jobs:
           # Dividend - Monthly on 1st at 4 AM UTC
           elif [ "${{ github.event.schedule }}" = "0 4 1 * *" ]; then
             validation_tables=idx_dividend
+
+          # Upcoming dividend - Monthly on 1st at 4:30 AM UTC
+          elif [ "${{ github.event.schedule }}" = "30 4 1 * *" ]; then
+            validation_tables=idx_upcoming_dividend
             
           # All-time price - Daily at 5 AM UTC
           elif [ "${{ github.event.schedule }}" = "0 5 * * *" ]; then
