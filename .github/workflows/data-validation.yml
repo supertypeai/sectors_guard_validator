@@ -12,10 +12,10 @@ on:
     - cron: '0 3 * * 1'
     # Daily data - Weekly every Monday at 1 AM UTC
     - cron: '0 1 * * 1'
-    # Dividend - Monthly on the 1st at 4 AM UTC
-    - cron: '0 4 1 * *'
-    # Upcoming dividend - Monthly on the 1st at 4:30 AM UTC
-    - cron: '30 4 1 * *'
+    # Dividend - Weekly on Tuesday at 4 AM UTC
+    - cron: '0 4 * * 2'
+    # Upcoming dividend - Weekly on Tuesday at 4:30 AM UTC
+    - cron: '30 4 * * 2'
     # All-time price - Daily at 5 AM UTC
     - cron: '0 5 * * *'
     # Filings - Daily at 9.15 AM UTC
