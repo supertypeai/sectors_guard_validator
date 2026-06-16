@@ -153,6 +153,12 @@ async def get_tables():
                 "description": "SGX filings data - Duplicate and data completeness validation",
                 "validation_type": "SGX Filings Validation",
                 "rules": "1. Duplicate checks on composite key (url, shareholder_name, transaction_date, shares_before, shares_after); 2. Missing transaction details check (number_of_stock, value, price_per_share)"
+            },
+            {
+                "name": "sgx_companies",
+                "description": "SGX companies sector and sub-sector classification validation",
+                "validation_type": "SGX Companies Validation",
+                "rules": "Active and non-suspended companies must not have Unknown sector or sub_sector"
             }
         ]
         

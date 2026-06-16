@@ -33,7 +33,9 @@ on:
     # Company profile - Monthly on the 29th at 11 AM UTC
     - cron: '0 11 29 * *'
     # SGX Filings - Weekdays (Mon-Fri) at 6 AM UTC
-    - cron: '0 6 * * 1-5' 
+    - cron: '0 6 * * 1-5'
+    # SGX Companies - Weekly every Monday at 2 AM UTC
+    - cron: '0 2 * * 1'
 
   workflow_dispatch:
     inputs:
@@ -60,6 +62,7 @@ on:
           - 'sgx_manual_input'
           - 'company_profile'
           - 'sgx_filings'
+          - 'sgx_companies'
 
 env:
   PYTHON_VERSION: '3.11'
@@ -150,8 +153,12 @@ jobs:
               validation_tables=sgx_filings
               echo "validation_tables=$validation_tables" >> $GITHUB_OUTPUT
               ;;
+            "sgx_companies")
+              validation_tables=sgx_companies
+              echo "validation_tables=$validation_tables" >> $GITHUB_OUTPUT
+              ;;
             "all")
-              validation_tables=idx_combine_financials_annual,idx_combine_financials_quarterly,idx_daily_data,idx_daily_data_completeness,index_daily_data,idx_dividend,idx_upcoming_dividend,idx_all_time_price,idx_filings,idx_stock_split,idx_agm,idx_news,sgx_company_report,sgx_manual_input,idx_company_profile,sgx_filings
+              validation_tables=idx_combine_financials_annual,idx_combine_financials_quarterly,idx_daily_data,idx_daily_data_completeness,index_daily_data,idx_dividend,idx_upcoming_dividend,idx_all_time_price,idx_filings,idx_stock_split,idx_agm,idx_news,sgx_company_report,sgx_manual_input,idx_company_profile,sgx_filings,sgx_companies
               echo "validation_tables=$validation_tables" >> $GITHUB_OUTPUT
               ;;
           esac
@@ -221,7 +228,11 @@ jobs:
           # SGX Filings - Weekdays (Mon-Fri) at 6 AM UTC
           elif [ "${{ github.event.schedule }}" = "0 6 * * 1-5" ]; then
             validation_tables=sgx_filings
-            
+
+          # SGX Companies - Weekly every Monday at 2 AM UTC
+          elif [ "${{ github.event.schedule }}" = "0 2 * * 1" ]; then
+            validation_tables=sgx_companies
+
           fi
           
           echo "Debug: Schedule = ${{ github.event.schedule }}"

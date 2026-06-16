@@ -38,7 +38,8 @@ class IDXFinancialValidator(DataValidator):
             'sgx_manual_input': self._validate_sgx_manual_input,
             'idx_company_profile': self._validate_company_profile,
             'idx_sector_reports': self._validate_sector_reports,
-            'sgx_filings': self._validate_sgx_filings
+            'sgx_filings': self._validate_sgx_filings,
+            'sgx_companies': self._validate_sgx_companies
         }
         # Cache for IDXIC reference data
         self._idxic_cache = None
@@ -3216,6 +3217,36 @@ class IDXFinancialValidator(DataValidator):
             })
         return {"anomalies": anomalies}
     
+    async def _validate_sgx_companies(self, data: pd.DataFrame) -> Dict[str, Any]:
+        anomalies = []
+
+        try:
+            data_filtered = data[data['is_active'] == True]
+            data_filtered = data_filtered[data_filtered['is_suspended'] != True]
+
+            data_sector_unknown = data_filtered[
+                (data_filtered['sector'] == 'Unknown') | (data_filtered['sub_sector'] == 'Unknown')
+            ]
+
+            for _, row in data_sector_unknown.iterrows():
+                anomalies.append({
+                    "type": "unknown_sector",
+                    "message": f"Company {row.get('symbol')} is active and not suspended but has unknown sector or sub_sector classification",
+                    "symbol": row.get('symbol'),
+                    "sector": row.get('sector'),
+                    "sub_sector": row.get('sub_sector'),
+                    "severity": "flagged"
+                })
+
+        except Exception as error: 
+            anomalies.append({
+                "type": "validation_error",
+                "message": f"Error validating sgx companies data: {str(error)}",
+                "severity": "flagged"
+            })
+
+        return {'anomalies': anomalies}
+
     async def _get_latest_daily_date(self) -> Optional[Any]:
         """Helper to get latest date from idx_daily_data"""
         try:
