@@ -271,7 +271,7 @@ class IDXFinancialValidator(DataValidator):
                 start_date = (today - timedelta(days=365)).isoformat()
                 end_date = today.isoformat()
             elif query_table == 'idx_filings' and not start_date and not end_date:
-                start_date = (today - timedelta(days=90)).isoformat()
+                start_date = (today - timedelta(days=30)).isoformat()
                 end_date = today.isoformat()
             elif query_table == 'idx_agm' and not start_date and not end_date:
                 # Validate only last 3 months where recording_date OR agm_date is in range
