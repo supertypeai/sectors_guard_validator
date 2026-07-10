@@ -44,6 +44,24 @@ class IDXFinancialValidator(DataValidator):
         # Cache for IDXIC reference data
         self._idxic_cache = None
 
+    @staticmethod
+    def _compute_net_shares(price_transactions: list[dict]):
+        if not isinstance(price_transactions, list):
+            return 0
+
+        net_shares = 0
+
+        for transaction in price_transactions:
+            amount = transaction.get("amount_transacted", 0) or 0
+
+            if transaction.get("type") == "buy":
+                net_shares += amount
+                
+            elif transaction.get("type") == "sell":
+                net_shares -= amount
+
+        return net_shares
+
     def _load_idxic_reference(self) -> Dict[str, any]:
         """
         Load IDXIC classification names from CSV file.
@@ -2120,10 +2138,12 @@ class IDXFinancialValidator(DataValidator):
         4. Transaction value calculation: price * amount_transaction = transaction_value (within 1% tolerance)
         """
         anomalies = []
+        
         try:
             # Ensure required columns for price validation
             required_cols = ['timestamp', 'symbol', 'price']
             missing_cols = [col for col in required_cols if col not in data.columns]
+            
             if missing_cols:
                 anomalies.append({
                     "type": "missing_required_columns",
@@ -2131,6 +2151,7 @@ class IDXFinancialValidator(DataValidator):
                     "message": f"Missing required columns: {', '.join(missing_cols)}",
                     "severity": "flagged"
                 })
+
                 return {"anomalies": anomalies}
 
             # Prepare data
@@ -2199,58 +2220,33 @@ class IDXFinancialValidator(DataValidator):
                         print(f"âš ï¸  Error checking transaction type consistency for row {idx}: {e}")
                         continue
 
-            # Rule 4: Transaction value calculation check
-            # price * amount_transaction should equal transaction_value (within 1% tolerance)
-            value_check_cols = ['price', 'amount_transaction', 'transaction_value']
-            if all(col in data.columns for col in value_check_cols):
-                for idx, row in data.iterrows():
-                    try:
-                        price = row.get('price')
-                        amount_transaction = row.get('amount_transaction')
-                        transaction_value = row.get('transaction_value')
-                        
-                        # Skip if any value is missing
-                        if pd.isna(price) or pd.isna(amount_transaction) or pd.isna(transaction_value):
-                            continue
-                        
-                        price = float(price)
-                        amount_transaction = float(amount_transaction)
-                        transaction_value = float(transaction_value)
-                        
-                        # Skip if any value is zero (avoid division errors and meaningless checks)
-                        if price == 0 or amount_transaction == 0 or transaction_value == 0:
-                            continue
-                        
-                        expected_value = price * amount_transaction
-                        
-                        # Calculate percentage difference (use larger value as base to handle both directions)
-                        base_value = max(abs(expected_value), abs(transaction_value))
-                        value_diff_pct = abs(expected_value - transaction_value) / base_value * 100
-                        
-                        # Allow 1% tolerance for rounding differences
-                        if value_diff_pct > 1.0:
-                            record_id = self._to_json_serializable(row.get('id', idx))
-                            symbol = str(row.get('symbol', 'N/A'))
-                            holder_name = str(row.get('holder_name', 'N/A'))
-                            filing_date = row['date'].strftime('%Y-%m-%d') if hasattr(row['date'], 'strftime') else str(row['date'])
-                            
-                            anomalies.append({
-                                "type": "transaction_value_mismatch",
-                                "record_id": record_id,
-                                "symbol": symbol,
-                                "holder_name": holder_name,
-                                "filing_date": filing_date,
-                                "price": price,
-                                "amount_transaction": int(amount_transaction),
-                                "reported_transaction_value": transaction_value,
-                                "expected_transaction_value": expected_value,
-                                "difference_pct": round(value_diff_pct, 2),
-                                "message": f"Transaction value mismatch for {symbol} (ID: {record_id}): price ({price:,.2f}), amount ({int(amount_transaction):,}) = {expected_value:,.2f}, but reported transaction_value is {transaction_value:,.2f} (diff: {value_diff_pct:.2f}%)",
-                                "severity": "flagged"
-                            })
-                    except (ValueError, TypeError) as e:
-                        print(f"âš ï¸  Error checking transaction value for row {idx}: {e}")
-                        continue
+            # Rule 4: Holding reconciliation via price_transaction net shares
+            reconciliation_cols = ['transaction_type', 'price_transaction', 'holding_before', 'holding_after']
+            
+            if all(col in data.columns for col in reconciliation_cols):
+                reconciliation_data = data[data['transaction_type'].isin(['buy', 'sell'])].copy()
+                reconciliation_data['net_shares'] = reconciliation_data['price_transaction'].apply(self._compute_net_shares)
+                reconciliation_data['expected_holding_after'] = reconciliation_data['holding_before'] + reconciliation_data['net_shares']
+
+                mismatches = reconciliation_data[
+                    reconciliation_data['holding_before'].notna() &
+                    reconciliation_data['holding_after'].notna() &
+                    (reconciliation_data['expected_holding_after'] != reconciliation_data['holding_after'])
+                ]
+
+                for _, row in mismatches.iterrows():
+                    record_id = self._to_json_serializable(row.get('id'))
+                    symbol = str(row.get('symbol', 'N/A'))
+                    net_shares = int(row['net_shares'])
+                    expected = int(row['expected_holding_after'])
+                    actual = int(row['holding_after'])
+
+                    anomalies.append({
+                        "type": "holding_mismatch",
+                        "symbol": symbol,
+                        "message": f"Holding mismatch for {symbol} (ID: {record_id}): holding_before {int(row['holding_before']):,} + net shares {net_shares:,} (from price_transaction) = expected holding_after {expected:,}, but recorded holding_after is {actual:,}",
+                        "severity": "flagged"
+                    })
 
             # Rule 1: Compare filing price with daily price
             for idx, filing in data.iterrows():
@@ -2294,122 +2290,59 @@ class IDXFinancialValidator(DataValidator):
                             "message": f"Filing price differs significantly from daily close by {price_diff_pct:.2f}% for {ticker} on {filing_date_str} with ID {id} (filing: {filing_price:,.2f}, close: {daily_close:,.2f})",
                             "severity": "flagged"
                         })
+
                 except (ValueError, TypeError) as e:
                     print(f"âš ï¸  Error processing filing for {filing.get('symbol', 'unknown')}: {e}")
                     continue
+
                 except Exception as e:
                     print(f"âŒ Unexpected error processing filing for {filing.get('symbol', 'unknown')}: {e}")
                     continue
+            
+            # detect duplicate with composite keys 
+            composite_key = [
+                "transaction_type",
+                "holder_name",
+                "symbol",
+                "holding_before",
+                "holding_after",
+                "timestamp"
+            ]
 
-            # Rule 2: Detect duplicate transactions
-            # Criteria:
-            # 1. Matching URL without matching UID
-            # 2. Matching transaction_type, amount_transaction, holder_name and symbol (all) with date difference < 3 days
-            duplicate_check_cols = ['timestamp', 'symbol']
-            if all(col in data.columns for col in duplicate_check_cols):
-                valid_data = data.copy()
-                
-                if len(valid_data) > 1:
-                    # Track which transaction IDs we've already reported as duplicates
-                    reported_groups = set()
-                    
-                    # Compare each transaction with others
-                    for i in range(len(valid_data)):
-                        row_a = valid_data.iloc[i]
-                        id_a = self._to_json_serializable(row_a.get('id', i))
-                        
-                        # Skip if this transaction is already in a reported group
-                        if id_a in reported_groups:
-                            continue
-                        
-                        for j in range(i + 1, len(valid_data)):
-                            row_b = valid_data.iloc[j]
-                            id_b = self._to_json_serializable(row_b.get('id', j))
-                            
-                            # Skip if already reported
-                            if id_b in reported_groups:
-                                continue
-                            
-                            is_duplicate = False
-                            duplicate_reason = ""
-                            
-                            # Criterion 1: Matching URL (source) without matching UID
-                            source_a = str(row_a.get('source', '')).strip()
-                            source_b = str(row_b.get('source', '')).strip()
-                            uid_a = str(row_a.get('UID', '')).strip() if pd.notna(row_a.get('UID')) else ""
-                            uid_b = str(row_b.get('UID', '')).strip() if pd.notna(row_b.get('UID')) else ""
-                            
-                            if source_a and source_b and source_a == source_b:
-                                # Same URL - check if UIDs are different or missing
-                                if uid_a != uid_b:
-                                    is_duplicate = True
-                                    duplicate_reason = f"Same source URL but different UID (UID_1: '{uid_a or 'null'}', UID_2: '{uid_b or 'null'}')"
-                            
-                            # Criterion 2: All four fields match with date difference < 3 days
-                            if not is_duplicate:
-                                # Check if all required columns exist for this criterion
-                                required_cols = ['transaction_type', 'amount_transaction', 'holder_name', 'symbol']
-                                if all(col in row_a.index and col in row_b.index for col in required_cols):
-                                    transaction_type_a = str(row_a.get('transaction_type', '')).strip().lower()
-                                    transaction_type_b = str(row_b.get('transaction_type', '')).strip().lower()
-                                    amount_a = row_a.get('amount_transaction')
-                                    amount_b = row_b.get('amount_transaction')
-                                    holder_a = str(row_a.get('holder_name', '')).strip().lower()
-                                    holder_b = str(row_b.get('holder_name', '')).strip().lower()
-                                    symbol_a = str(row_a.get('symbol', '')).strip().upper()
-                                    symbol_b = str(row_b.get('symbol', '')).strip().upper()
-                                    
-                                    # Check if all four fields match (skip if any critical field is null)
-                                    if (transaction_type_a and transaction_type_b and transaction_type_a == transaction_type_b and
-                                        pd.notna(amount_a) and pd.notna(amount_b) and amount_a == amount_b and
-                                        holder_a and holder_b and holder_a == holder_b and
-                                        symbol_a and symbol_b and symbol_a == symbol_b):
-                                        
-                                        # Calculate date difference in days
-                                        date_diff = abs((row_a['timestamp'] - row_b['timestamp']).days)
-                                        
-                                        # Check if date difference < 3 days
-                                        if date_diff < 3:
-                                            is_duplicate = True
-                                            duplicate_reason = f"Same transaction_type, amount_transaction, holder_name, and symbol with {date_diff} day{'s' if date_diff != 1 else ''} difference"
-                            
-                            if is_duplicate:
-                                # Mark both as reported
-                                reported_groups.add(id_a)
-                                reported_groups.add(id_b)
-                                
-                                # Format dates
-                                date_1_str = row_a['timestamp'].strftime('%Y-%m-%d') if hasattr(row_a['timestamp'], 'strftime') else str(row_a['timestamp'])
-                                date_2_str = row_b['timestamp'].strftime('%Y-%m-%d') if hasattr(row_b['timestamp'], 'strftime') else str(row_b['timestamp'])
-                                
-                                symbol_display = str(row_a.get('symbol', 'N/A'))
-                                amount_display = int(row_a['amount_transaction']) if pd.notna(row_a.get('amount_transaction')) else 'N/A'
-                                
-                                anomalies.append({
-                                    "type": "duplicate_transaction",
-                                    "transaction_1_id": id_a,
-                                    "transaction_2_id": id_b,
-                                    "symbol": symbol_display,
-                                    "amount_transaction": self._to_json_serializable(amount_display) if amount_display != 'N/A' else None,
-                                    "transaction_type": str(row_a.get('transaction_type', 'N/A')),
-                                    "holder_name": str(row_a.get('holder_name', 'N/A')),
-                                    "date_1": row_a['timestamp'].strftime('%Y-%m-%d %H:%M:%S') if hasattr(row_a['timestamp'], 'strftime') else str(row_a['timestamp']),
-                                    "date_2": row_b['timestamp'].strftime('%Y-%m-%d %H:%M:%S') if hasattr(row_b['timestamp'], 'strftime') else str(row_b['timestamp']),
-                                    "source_1": str(row_a.get('source', 'N/A')),
-                                    "source_2": str(row_b.get('source', 'N/A')),
-                                    "duplicate_reason": duplicate_reason,
-                                    "message": f"Duplicate transaction detected for {symbol_display} on {date_1_str} (ID: {id_a}) and {date_2_str} (ID: {id_b}): {duplicate_reason}",
-                                    "severity": "flagged"
-                                })
-                                # Only report first match for transaction_a, then move to next transaction
-                                break
+            duplicates = data[
+                data.duplicated(subset=composite_key, keep=False)
+            ]
+            
+            keys = composite_key + [
+                'id', 'created_at', 'source'
+            ]
 
-        except Exception as e:
+            df_duplicated = duplicates[keys]
+
+            for _, group in df_duplicated.groupby(composite_key):
+                symbol_display = str(group['symbol'].iloc[0])
+
+                date_id_labels = []
+
+                for _, row in group.iterrows():
+                    timestamp = row['timestamp']
+                    date_str = timestamp.strftime('%Y-%m-%d') if hasattr(timestamp, 'strftime') else str(timestamp)
+                    date_id_labels.append(f"{date_str} (ID: {row['id']})")
+
+                anomalies.append({
+                    "type": "duplicate_transaction",
+                    "symbol": symbol_display,
+                    "message": f"Duplicate transaction detected for {symbol_display} on {' and '.join(date_id_labels)}: Same transaction_type, holder_name, holding_before, holding_after, and timestamp",
+                    "severity": "flagged"
+                })
+
+        except Exception as error:
             anomalies.append({
                 "type": "validation_error",
-                "message": f"Error validating filing data: {str(e)}",
+                "message": f"Error validating filing data: {str(error)}",
                 "severity": "flagged"
             })
+
         return {"anomalies": anomalies}
     
     async def _validate_stock_split(self, data: pd.DataFrame) -> Dict[str, Any]:
