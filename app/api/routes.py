@@ -7,6 +7,7 @@ from typing import List, Dict, Any, Optional
 import time
 import json
 import os
+import asyncio
 import httpx
 from datetime import datetime, timedelta
 
@@ -1259,19 +1260,24 @@ async def get_github_actions_status():
                 workflows_data = workflows_response.json()
                 print(f"Available workflows: {[w['name'] for w in workflows_data.get('workflows', [])]}")
             
-            # Get check-api workflow runs
+            # Get check-api, fetch-sheet, fetch-cron-sheet workflow runs in parallel
             check_api_url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/actions/workflows/check-api.yml/runs"
-            check_api_response = await client.get(check_api_url, headers=headers, params={"per_page": 5})
-            
-            # Get fetch-sheet workflow runs  
             fetch_sheet_url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/actions/workflows/fetch-sheet.yml/runs"
-            fetch_sheet_response = await client.get(fetch_sheet_url, headers=headers, params={"per_page": 5})
-            
+            fetch_cron_sheet_url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/actions/workflows/fetch-cron-sheet.yml/runs"
+
+            check_api_response, fetch_sheet_response, fetch_cron_sheet_response = await asyncio.gather(
+                client.get(check_api_url, headers=headers, params={"per_page": 5}),
+                client.get(fetch_sheet_url, headers=headers, params={"per_page": 5}),
+                client.get(fetch_cron_sheet_url, headers=headers, params={"per_page": 5}),
+            )
+
             print(f"Check API URL: {check_api_url}")
             print(f"Check API Response Status: {check_api_response.status_code}")
             print(f"Fetch Sheet URL: {fetch_sheet_url}")
             print(f"Fetch Sheet Response Status: {fetch_sheet_response.status_code}")
-            
+            print(f"Fetch Cron Sheet URL: {fetch_cron_sheet_url}")
+            print(f"Fetch Cron Sheet Response Status: {fetch_cron_sheet_response.status_code}")
+
             result = {
                 "check_api": {
                     "status": "unknown",
@@ -1281,7 +1287,14 @@ async def get_github_actions_status():
                     "runs": []
                 },
                 "fetch_sheet": {
-                    "status": "unknown", 
+                    "status": "unknown",
+                    "last_run": None,
+                    "last_success": None,
+                    "last_failure": None,
+                    "runs": []
+                },
+                "fetch_cron_sheet": {
+                    "status": "unknown",
                     "last_run": None,
                     "last_success": None,
                     "last_failure": None,
@@ -1347,6 +1360,32 @@ async def get_github_actions_status():
             else:
                 print(f"Fetch Sheet error: {fetch_sheet_response.status_code} - {fetch_sheet_response.text}")
 
+            # Process fetch-cron-sheet workflow runs
+            if fetch_cron_sheet_response.status_code == 200:
+                fetch_cron_sheet_data = fetch_cron_sheet_response.json()
+                runs = fetch_cron_sheet_data.get("workflow_runs", [])
+                if runs:
+                    latest_run = runs[0]
+                    result["fetch_cron_sheet"]["status"] = latest_run.get("conclusion", "unknown")
+                    result["fetch_cron_sheet"]["last_run"] = latest_run.get("created_at")
+
+                    for run in runs:
+                        conclusion = run.get("conclusion")
+                        created_at = run.get("created_at")
+                        if conclusion == "success" and not result["fetch_cron_sheet"]["last_success"]:
+                            result["fetch_cron_sheet"]["last_success"] = created_at
+                        elif conclusion == "failure" and not result["fetch_cron_sheet"]["last_failure"]:
+                            result["fetch_cron_sheet"]["last_failure"] = created_at
+
+                    result["fetch_cron_sheet"]["runs"] = [{
+                        "id": run.get("id"),
+                        "status": run.get("conclusion", "unknown"),
+                        "created_at": run.get("created_at"),
+                        "html_url": run.get("html_url")
+                    } for run in runs[:3]]
+            else:
+                print(f"Fetch Cron Sheet error: {fetch_cron_sheet_response.status_code} - {fetch_cron_sheet_response.text}")
+
             # Cache the result for TTL to reduce repeated calls
             try:
                 _LOCAL_CACHE['github_actions'] = {'ts': time.time(), 'data': result}
@@ -1367,6 +1406,14 @@ async def get_github_actions_status():
                 "error": str(e)
             },
             "fetch_sheet": {
+                "status": "unknown",
+                "last_run": None,
+                "last_success": None,
+                "last_failure": None,
+                "runs": [],
+                "error": str(e)
+            },
+            "fetch_cron_sheet": {
                 "status": "unknown",
                 "last_run": None,
                 "last_success": None,

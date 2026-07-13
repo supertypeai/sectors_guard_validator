@@ -74,6 +74,7 @@ class Settings(BaseSettings):
 
     # Optional Google Sheet CSV URL for backend fetch
     gsheet_csv_url: Optional[str] = os.getenv("GSHEET_CSV_URL")
+    gsheet_csv_url_cron: Optional[str] = os.getenv("GSHEET_CSV_URL_CRON")
 
     # ── Use our graceful env source instead of the default one ────────────
     @classmethod
