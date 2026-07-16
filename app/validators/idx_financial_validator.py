@@ -39,7 +39,8 @@ class IDXFinancialValidator(DataValidator):
             'idx_company_profile': self._validate_company_profile,
             'idx_sector_reports': self._validate_sector_reports,
             'sgx_filings': self._validate_sgx_filings,
-            'sgx_companies': self._validate_sgx_companies
+            'sgx_companies': self._validate_sgx_companies,
+            'idx_broker_summary_daily_completeness': self._validate_broker_summary_daily_completeness
         }
         # Cache for IDXIC reference data
         self._idxic_cache = None
@@ -248,7 +249,8 @@ class IDXFinancialValidator(DataValidator):
 
             # Alias mapping: some validator entries are logical/pseudo tables mapped to a real table
             alias_map = {
-                'idx_daily_data_completeness': 'idx_daily_data'
+                'idx_daily_data_completeness': 'idx_daily_data',
+                'idx_broker_summary_daily_completeness': 'idx_broker_summary_daily'
             }
             query_table = alias_map.get(table_name, table_name)
 
@@ -259,6 +261,11 @@ class IDXFinancialValidator(DataValidator):
                 # If today is Monday (0), go back 3 days to Friday; otherwise go back 1 day
                 days = 3 if today.weekday() == 0 else 1
                 target = (today - timedelta(days=days))
+                start_date = target.isoformat()
+                end_date = start_date
+            # Broker completeness window: previous business day (reuses same today computation above)
+            if table_name == 'idx_broker_summary_daily_completeness' and not start_date and not end_date:
+                target = self._prev_business_day(today)
                 start_date = target.isoformat()
                 end_date = start_date
             if query_table == 'idx_daily_data' and not start_date and not end_date:
@@ -288,7 +295,8 @@ class IDXFinancialValidator(DataValidator):
             if query_table in {
                 'idx_daily_data', 'index_daily_data', 'idx_combine_financials_quarterly',
                 'idx_combine_financials_annual', 'idx_dividend', 'idx_all_time_price',
-                'idx_stock_split', 'idx_financial_sheets_annual', 'idx_financial_sheets_quarterly'
+                'idx_stock_split', 'idx_financial_sheets_annual', 'idx_financial_sheets_quarterly',
+                'idx_broker_summary_daily'
             }:
                 date_filter_column = 'date'
             elif query_table == 'idx_filings':
@@ -4026,3 +4034,45 @@ class IDXFinancialValidator(DataValidator):
             "anomalies": anomalies,
             "status": "error" if any(a.get("severity") == "error" for a in anomalies) else "success"
         }
+
+    @staticmethod
+    def _prev_business_day(today: pd.Timestamp | datetime) -> pd.Timestamp:
+        """Return previous business day from today (Mon→Fri, Tue–Fri→yesterday)."""
+        if isinstance(today, datetime):
+            today = pd.Timestamp(today)
+        days = 3 if today.weekday() == 0 else 1
+        return today - timedelta(days=days)
+
+    async def _validate_broker_summary_daily_completeness(self, data: pd.DataFrame) -> Dict[str, Any]:
+        """Check previous business day data exists in idx_broker_summary_daily."""
+        anomalies = []
+        try:
+            if data is None or data.empty:
+                anomalies.append({
+                    "type": "broker_summary_missing",
+                    "message": "No broker summary data found for the previous business day",
+                    "severity": "flagged"
+                })
+                return {"anomalies": anomalies}
+
+            jakarta_tz = pytz.timezone('Asia/Jakarta')
+            target = self._prev_business_day(pd.Timestamp(datetime.now(jakarta_tz).date()))
+            target_date = target.strftime('%Y-%m-%d')
+
+            x = data.copy()
+            x['date'] = pd.to_datetime(x['date'], errors='coerce')
+
+            if x[x['date'].dt.strftime('%Y-%m-%d') == target_date].empty:
+                anomalies.append({
+                    "type": "broker_summary_missing",
+                    "target_date": target_date,
+                    "message": f"No broker summary data found for {target_date} (previous business day)",
+                    "severity": "flagged"
+                })
+        except Exception as e:
+            anomalies.append({
+                "type": "validation_error",
+                "message": f"Error validating broker summary completeness: {str(e)}",
+                "severity": "flagged"
+            })
+        return {"anomalies": anomalies}

@@ -36,6 +36,8 @@ on:
     - cron: '0 6 * * 1-5'
     # SGX Companies - Weekly every Monday at 2 AM UTC
     - cron: '0 2 * * 1'
+    # Broker summary completeness - Weekdays at 09:00 WIB (02:00 UTC)
+    - cron: '0 2 * * 1-5'
 
   workflow_dispatch:
     inputs:
@@ -63,6 +65,7 @@ on:
           - 'company_profile'
           - 'sgx_filings'
           - 'sgx_companies'
+          - 'broker_summary_daily_completeness'
 
 env:
   PYTHON_VERSION: '3.11'
@@ -232,6 +235,10 @@ jobs:
           # SGX Companies - Weekly every Monday at 2 AM UTC
           elif [ "${{ github.event.schedule }}" = "0 2 * * 1" ]; then
             validation_tables=sgx_companies
+
+          # Broker summary completeness - Weekdays at 09:00 WIB (02:00 UTC)
+          elif [ "${{ github.event.schedule }}" = "0 2 * * 1-5" ]; then
+            validation_tables=idx_broker_summary_daily_completeness
 
           fi
           
