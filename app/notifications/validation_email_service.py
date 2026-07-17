@@ -1016,7 +1016,7 @@ class ValidationEmailService:
         if run_count == 0:
             rows_html = """
             <tr>
-              <td colspan="4" style="padding:20px;text-align:center;color:#6b7280;font-style:italic;">
+              <td colspan="3" style="padding:20px;text-align:center;color:#6b7280;font-style:italic;">
                 No failed runs this week – all good! 🎉
               </td>
             </tr>"""
@@ -1035,8 +1035,7 @@ class ValidationEmailService:
 
                 rows_html += f"""
             <tr style="border-bottom:1px solid #f3f4f6;">
-              <td style="padding:12px 14px;font-family:monospace;font-size:13px;color:#374151;">{run.get('job_pid','—')}</td>
-              <td style="padding:12px 14px;font-family:monospace;font-size:13px;color:#374151;">{run.get('runid','—')}</td>
+              <td style="padding:12px 14px;font-family:monospace;font-size:13px;color:#374151;">{run.get('jobid','—')}</td>
               <td style="padding:12px 14px;font-size:13px;color:#374151;white-space:nowrap;">{end_time_fmt}</td>
               <td style="padding:12px 14px;font-size:13px;color:#ef4444;word-break:break-word;max-width:340px;">{return_msg}</td>
             </tr>"""
@@ -1076,8 +1075,7 @@ class ValidationEmailService:
             <table role="presentation" style="width:100%;border-collapse:collapse;font-size:14px;" cellpadding="0" cellspacing="0">
               <thead>
                 <tr style="background:#f1f5f9;">
-                  <th style="padding:12px 14px;text-align:left;font-weight:600;color:#64748b;font-size:12px;text-transform:uppercase;letter-spacing:.5px;white-space:nowrap;">Job PID</th>
-                  <th style="padding:12px 14px;text-align:left;font-weight:600;color:#64748b;font-size:12px;text-transform:uppercase;letter-spacing:.5px;white-space:nowrap;">Job ID&nbsp;(runid)</th>
+                  <th style="padding:12px 14px;text-align:left;font-weight:600;color:#64748b;font-size:12px;text-transform:uppercase;letter-spacing:.5px;white-space:nowrap;">Job ID</th>
                   <th style="padding:12px 14px;text-align:left;font-weight:600;color:#64748b;font-size:12px;text-transform:uppercase;letter-spacing:.5px;white-space:nowrap;">End Time</th>
                   <th style="padding:12px 14px;text-align:left;font-weight:600;color:#64748b;font-size:12px;text-transform:uppercase;letter-spacing:.5px;">Return Message</th>
                 </tr>
