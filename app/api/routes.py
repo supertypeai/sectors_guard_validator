@@ -1072,6 +1072,15 @@ async def get_table_validation_config(table_name: str):
                     "metrics": ["customer_breakdown", "property_counts_by_country", "total_revenue"],
                     "alert_condition": "customer_breakdown sum <= total_revenue; property_counts sum <= total_revenue"
                 }
+            },
+            "sgx_reit_guard": {
+                "table_name": table_name,
+                "validation_type": "SGX REIT Guard",
+                "description": "Whole-database invariant checks for prod SGX REIT tables",
+                "rules": {
+                    "groups": ["scale", "enums", "sums", "keys", "nulls", "tallies", "coverage", "segments"],
+                    "alert_condition": "any group check fails"
+                }
             }
         }
         
