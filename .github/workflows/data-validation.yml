@@ -38,6 +38,8 @@ on:
     - cron: '0 2 * * 1'
     # Broker summary completeness - Weekdays at 09:00 WIB (02:00 UTC)
     - cron: '0 2 * * 1-5'
+    # SGX REIT guard - Weekly every Monday at 5:30 AM UTC
+    - cron: '30 5 * * 1'
 
   workflow_dispatch:
     inputs:
@@ -66,6 +68,7 @@ on:
           - 'sgx_filings'
           - 'sgx_companies'
           - 'broker_summary_daily_completeness'
+          - 'sgx_reit_guard'
 
 env:
   PYTHON_VERSION: '3.11'
@@ -160,8 +163,12 @@ jobs:
               validation_tables=sgx_companies
               echo "validation_tables=$validation_tables" >> $GITHUB_OUTPUT
               ;;
+            "sgx_reit_guard")
+              validation_tables=sgx-reit-guard
+              echo "validation_tables=$validation_tables" >> $GITHUB_OUTPUT
+              ;;
             "all")
-              validation_tables=idx_combine_financials_annual,idx_combine_financials_quarterly,idx_daily_data,idx_daily_data_completeness,index_daily_data,idx_dividend,idx_upcoming_dividend,idx_all_time_price,idx_filings,idx_stock_split,idx_agm,idx_news,sgx_company_report,sgx_manual_input,idx_company_profile,sgx_filings,sgx_companies
+              validation_tables=idx_combine_financials_annual,idx_combine_financials_quarterly,idx_daily_data,idx_daily_data_completeness,index_daily_data,idx_dividend,idx_upcoming_dividend,idx_all_time_price,idx_filings,idx_stock_split,idx_agm,idx_news,sgx_company_report,sgx_manual_input,idx_company_profile,sgx_filings,sgx_companies,sgx-reit-guard
               echo "validation_tables=$validation_tables" >> $GITHUB_OUTPUT
               ;;
           esac
@@ -239,6 +246,10 @@ jobs:
           # Broker summary completeness - Weekdays at 09:00 WIB (02:00 UTC)
           elif [ "${{ github.event.schedule }}" = "0 2 * * 1-5" ]; then
             validation_tables=idx_broker_summary_daily_completeness
+
+          # SGX REIT guard - Weekly every Monday at 5:30 AM UTC
+          elif [ "${{ github.event.schedule }}" = "30 5 * * 1" ]; then
+            validation_tables=sgx-reit-guard
 
           fi
           
