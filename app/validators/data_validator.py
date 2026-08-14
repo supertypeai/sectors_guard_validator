@@ -95,10 +95,24 @@ class DataValidator:
             # Return empty DataFrame if table doesn't exist or error occurs
             return pd.DataFrame()
 
-    async def _fetch_ticker_data(self, table_name: str, symbol: str) -> pd.DataFrame:
-        """Fetch specific ticker data from Supabase table"""
+    async def _fetch_ticker_data(
+        self,
+        table_name: str,
+        symbol: str,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> pd.DataFrame:
+        """Fetch ticker data from Supabase, optionally within a date range."""
         try:
-            response = self.supabase.table(table_name).select("*").eq("symbol", symbol).execute()
+            query = self.supabase.table(table_name).select("*").eq("symbol", symbol)
+
+            if start_date:
+                query = query.gte("date", start_date)
+
+            if end_date:
+                query = query.lte("date", end_date)
+
+            response = query.execute()
             return pd.DataFrame(response.data)
         except Exception as e:
             # Return empty DataFrame if table doesn't exist or error occurs

@@ -2,6 +2,7 @@
 import numpy as np
 from typing import Dict, List, Any, Optional, Tuple
 from datetime import datetime, timedelta
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 import re
 import asyncio
@@ -2136,14 +2137,11 @@ class IDXFinancialValidator(DataValidator):
     
     async def _validate_filings(self, data: pd.DataFrame) -> Dict[str, Any]:
         """
-        Validate idx_filings table
-        Conditions:
-        1. Compare filing price with daily price at the timestamp from idx_daily_data
-        2. Detect duplicate transactions: 
-           - Matching URL without matching UID, OR
-           - Matching transaction_type, amount_transaction, holder_name and symbol (all) with date difference < 3 days
-        3. Transaction type consistency: share_before > share_after must be "sell", share_before < share_after must be "buy"
-        4. Transaction value calculation: price * amount_transaction = transaction_value (within 1% tolerance)
+        Validate idx_filings records.
+
+        Checks transaction type and holdings reconciliation, detects transaction
+        prices that may be total transaction values, compares filing prices with
+        the daily close, and detects duplicate and correction-document candidates.
         """
         anomalies = []
         
@@ -2167,7 +2165,7 @@ class IDXFinancialValidator(DataValidator):
             data['timestamp'] = pd.to_datetime(data['timestamp'])
             data['date'] = data['timestamp'].dt.date
 
-            # Rule 3: Transaction type consistency check
+            # Check transaction type consistency.
             # share_before > share_after -> must be "sell" (cannot be "buy")
             # share_before < share_after -> must be "buy" (cannot be "sell")
             type_check_cols = ['holding_before', 'holding_after', 'transaction_type']
@@ -2228,7 +2226,7 @@ class IDXFinancialValidator(DataValidator):
                         print(f"âš ï¸  Error checking transaction type consistency for row {idx}: {e}")
                         continue
 
-            # Rule 4: Holding reconciliation via price_transaction net shares
+            # Reconcile holding_after with net shares from price_transaction.
             reconciliation_cols = ['transaction_type', 'price_transaction', 'holding_before', 'holding_after']
             
             if all(col in data.columns for col in reconciliation_cols):
@@ -2256,12 +2254,146 @@ class IDXFinancialValidator(DataValidator):
                         "severity": "flagged"
                     })
 
-            # Rule 1: Compare filing price with daily price
+            # Detect transaction prices that are likely total transaction values.
+            price_correction_candidate_record_ids = set()
+
+            for symbol, symbol_filings in data.groupby('symbol'):
+                transaction_dates = []
+
+                for transactions in symbol_filings['price_transaction']:
+                    if not isinstance(transactions, list):
+                        continue
+
+                    for transaction in transactions:
+                        if not isinstance(transaction, dict):
+                            continue
+
+                        transaction_date = pd.to_datetime(
+                            transaction.get('date'),
+                            errors='coerce',
+                        )
+
+                        if pd.notna(transaction_date):
+                            transaction_dates.append(transaction_date.date())
+
+                if not transaction_dates:
+                    continue
+
+                daily_data = await self._fetch_ticker_data(
+                    'idx_daily_data',
+                    symbol,
+                    start_date=(min(transaction_dates) - timedelta(days=5)).isoformat(),
+                    end_date=(max(transaction_dates) + timedelta(days=5)).isoformat(),
+                )
+
+                if (
+                    daily_data.empty
+                    or not all(
+                        column in daily_data.columns
+                        for column in ['date', 'low', 'high']
+                    )
+                ):
+                    continue
+
+                daily_data = daily_data.copy()
+                daily_data['date'] = pd.to_datetime(daily_data['date'], errors='coerce').dt.date
+                daily_data['low'] = pd.to_numeric(daily_data['low'], errors='coerce')
+                daily_data['high'] = pd.to_numeric(daily_data['high'], errors='coerce')
+
+                for _, filing in symbol_filings.iterrows():
+                    transactions = filing.get('price_transaction')
+
+                    if not isinstance(transactions, list):
+                        continue
+
+                    for transaction in transactions:
+                        if not isinstance(transaction, dict) or transaction.get('repurchase_agreement') is True:
+                            continue
+
+                        transaction_date = pd.to_datetime(
+                            transaction.get('date'),
+                            errors='coerce',
+                        )
+
+                        if pd.isna(transaction_date):
+                            continue
+
+                        try:
+                            reported_price = Decimal(str(transaction.get('price')))
+                            amount_transacted = Decimal(str(transaction.get('amount_transacted')))
+
+                        except (InvalidOperation, ValueError):
+                            continue
+
+                        if (
+                            not reported_price.is_finite()
+                            or not amount_transacted.is_finite()
+                            or reported_price <= 0
+                            or amount_transacted <= 0
+                        ):
+                            continue
+
+                        transaction_date = transaction_date.date()
+                        market_window_start = transaction_date - timedelta(days=5)
+                        market_window_end = transaction_date + timedelta(days=5)
+
+                        market_window = daily_data[
+                            (daily_data['date'] >= market_window_start)
+                            & (daily_data['date'] <= market_window_end)
+                            & daily_data['low'].notna()
+                            & daily_data['high'].notna()
+                            & (daily_data['low'] > 0)
+                            & (daily_data['high'] > 0)
+                            & (daily_data['low'] <= daily_data['high'])
+                        ]
+
+                        if market_window.empty:
+                            continue
+
+                        market_low = Decimal(str(market_window['low'].min()))
+                        market_high = Decimal(str(market_window['high'].max()))
+
+                        if market_low <= reported_price <= market_high:
+                            continue
+
+                        unit_price_candidate = reported_price / amount_transacted
+
+                        if (
+                            unit_price_candidate != unit_price_candidate.to_integral_value()
+                            or not market_low <= unit_price_candidate <= market_high
+                        ):
+                            continue
+
+                        record_id = self._to_json_serializable(filing.get('id'))
+                        price_correction_candidate_record_ids.add(record_id)
+
+                        anomalies.append({
+                            "type": "transaction_price_correction_candidate",
+                            "record_id": record_id,
+                            "symbol": str(symbol),
+                            "transaction_date": transaction_date.isoformat(),
+                            "reported_price": float(reported_price),
+                            "amount_transacted": float(amount_transacted),
+                            "unit_price_candidate": float(unit_price_candidate),
+                            "market_low": float(market_low),
+                            "market_high": float(market_high),
+                            "message": (
+                                f"Transaction price {reported_price:,.2f} for {symbol} on {transaction_date} "
+                                f"may be a total transaction value: dividing by {amount_transacted:,.0f} gives in-range unit price {unit_price_candidate:,.2f} (ID: {record_id})"
+                            ),
+                            "severity": "flagged"
+                        })
+
+            # Compare filing price with the daily close on the filing date.
             for idx, filing in data.iterrows():
                 try:
+                    if filing.get('id') in price_correction_candidate_record_ids:
+                        continue
+
                     # Validate price
                     if pd.isna(filing['price']) or filing['price'] == '':
                         continue
+
                     filing_price = float(filing['price'])
                     filing_date = filing['date']
 
@@ -2269,24 +2401,35 @@ class IDXFinancialValidator(DataValidator):
                     ticker = filing['symbol']
 
                     try:
-                        daily_data = await self._fetch_ticker_data('idx_daily_data', ticker)
+                        daily_data = await self._fetch_ticker_data(
+                            'idx_daily_data',
+                            ticker,
+                            start_date=filing_date.isoformat(),
+                            end_date=filing_date.isoformat(),
+                        )
+
                     except Exception:
                         continue
+
                     if daily_data is None or daily_data.empty:
                         continue
+
                     daily_data = daily_data.copy()
                     daily_data['date'] = pd.to_datetime(daily_data['date']).dt.date
                     matching_daily = daily_data[daily_data['date'] == filing_date]
                     id = filing['id']
+
                     if matching_daily.empty:
                         continue
+
                     daily_close = float(matching_daily.iloc[0]['close'])
                     price_diff_pct = abs(filing_price - daily_close) / daily_close * 100
                     # print(f"Ticker {ticker} on {filing_date}: filing price {filing_price}, daily close {daily_close}, diff% {price_diff_pct:.2f}%")
+
                     if price_diff_pct >= 50.0:
                         filing_date_str = filing_date.strftime('%Y-%m-%d') if hasattr(filing_date, 'strftime') else str(filing_date)
                         filing_timestamp_str = filing['timestamp'].strftime('%Y-%m-%d %H:%M:%S') if hasattr(filing['timestamp'], 'strftime') else str(filing['timestamp'])
-                        
+
                         anomalies.append({
                             "type": "filing_price_discrepancy",
                             "ticker": ticker,
@@ -2307,18 +2450,22 @@ class IDXFinancialValidator(DataValidator):
                     print(f"âŒ Unexpected error processing filing for {filing.get('symbol', 'unknown')}: {e}")
                     continue
             
-            # detect duplicate with composite keys 
+            # Detect duplicates with composite keys.
+            duplicate_data = data.copy()
+            duplicate_data['timestamp'] = duplicate_data['timestamp'].astype(str).str[:10]
+
             composite_key = [
-                "transaction_type",
-                "holder_name",
                 "symbol",
+                "timestamp",
+                "holder_name",
+                "transaction_type",
                 "holding_before",
                 "holding_after",
-                "timestamp"
+                "transaction_value"
             ]
 
-            duplicates = data[
-                data.duplicated(subset=composite_key, keep=False)
+            duplicates = duplicate_data[
+                duplicate_data.duplicated(subset=composite_key, keep=False)
             ]
             
             keys = composite_key + [
@@ -2343,6 +2490,119 @@ class IDXFinancialValidator(DataValidator):
                     "message": f"Duplicate transaction detected for {symbol_display} on {' and '.join(date_id_labels)}: Same transaction_type, holder_name, holding_before, holding_after, and timestamp",
                     "severity": "flagged"
                 })
+
+            # Detect newer filings that may correct an older filing.
+            correction_columns = [
+                'id',
+                'timestamp',
+                'symbol',
+                'holder_name',
+                'holding_before',
+                'holding_after',
+                'price_transaction',
+                'UID',
+            ]
+
+            if all(column in data.columns for column in correction_columns):
+                correction_data = data[data['UID'].isna()].sort_values(
+                    'timestamp',
+                    ascending=False,
+                )
+                payload_record_ids = set(correction_data['id'].dropna())
+                reported_candidates = set()
+
+                for _, current_filing in correction_data.iterrows():
+                    current_timestamp = current_filing['timestamp']
+                    current_symbol = current_filing['symbol']
+                    current_holder_name = str(current_filing['holder_name']).strip().lower()
+                    current_transactions = current_filing['price_transaction']
+
+                    if not current_symbol or not current_holder_name:
+                        continue
+
+                    if not isinstance(current_transactions, list):
+                        continue
+
+                    current_transaction_dates = {
+                        transaction.get('date')
+                        for transaction in current_transactions
+                        if transaction.get('date')
+                    }
+
+                    if not current_transaction_dates:
+                        continue
+
+                    try:
+                        historical_response = (
+                            self.supabase.table('idx_filings')
+                            .select(
+                                'id, source, timestamp, symbol, holder_name, '
+                                'holding_before, holding_after, price_transaction, UID'
+                            )
+                            .eq('symbol', current_symbol)
+                            .eq('holder_name', current_filing['holder_name'])
+                            .lt('timestamp', current_timestamp.isoformat())
+                            .is_('UID', 'null')
+                            .execute()
+                        )
+
+                    except Exception:
+                        continue
+
+                    payload_older_filings = correction_data.loc[
+                        correction_data['timestamp'] < current_timestamp
+                    ].to_dict('records')
+
+                    historical_older_filings = [
+                        filing
+                        for filing in historical_response.data or []
+                        if filing.get('id') not in payload_record_ids
+                    ]
+
+                    for older_filing in payload_older_filings + historical_older_filings:
+                        if older_filing.get('symbol') != current_symbol:
+                            continue
+
+                        older_holder_name = str(older_filing.get('holder_name')).strip().lower()
+                        older_transactions = older_filing.get('price_transaction')
+
+                        if current_holder_name != older_holder_name or not isinstance(older_transactions, list):
+                            continue
+
+                        older_transaction_dates = {
+                            transaction.get('date')
+                            for transaction in older_transactions
+                            if transaction.get('date')
+                        }
+
+                        shared_transaction_dates = current_transaction_dates & older_transaction_dates
+
+                        if (
+                            not shared_transaction_dates
+                            or current_filing['holding_before'] != older_filing.get('holding_before')
+                            or current_filing['holding_after'] != older_filing.get('holding_after')
+                        ):
+                            continue
+
+                        current_record_id = self._to_json_serializable(current_filing['id'])
+                        older_record_id = self._to_json_serializable(older_filing.get('id'))
+                        candidate_key = (str(current_record_id), str(older_record_id))
+
+                        if candidate_key in reported_candidates:
+                            continue
+
+                        reported_candidates.add(candidate_key)
+
+                        anomalies.append({
+                            "type": "correction_document_candidate",
+                            "record_id": current_record_id,
+                            "older_record_id": older_record_id,
+                            "symbol": str(current_symbol),
+                            "holder_name": current_filing['holder_name'],
+                            "shared_transaction_dates": sorted(shared_transaction_dates),
+                            "message": f"Filing ID {current_record_id} may correct older filing ID {older_record_id} for {current_symbol}: the holder, holdings, and transaction date match",
+                            "severity": "flagged"
+                        })
 
         except Exception as error:
             anomalies.append({
