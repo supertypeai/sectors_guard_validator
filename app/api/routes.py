@@ -14,6 +14,7 @@ from datetime import datetime, timedelta
 from ..database.connection import get_supabase_client
 from ..validators.idx_financial_validator import IDXFinancialValidator
 from ..validators.sgx_reit_guard_validator import SgxReitGuardValidator
+from ..validators.sgx_agm_guard_validator import SgxAgmGuardValidator
 from ..notifications.email_helper import EmailHelper
 from app.auth import verify_bearer_token
 
@@ -167,6 +168,12 @@ async def get_tables():
                 "description": "Whole-database invariant checks for prod SGX REIT tables (property, top_tenant, trade_mix, performance, property_transaction)",
                 "validation_type": "SGX REIT Guard",
                 "rules": "scale, enums, sums, keys, nulls, tallies, coverage, segments -- see /api/validation/run/sgx-reit-guard"
+            },
+            {
+                "name": "sgx_agm_guard",
+                "description": "Whole-table invariant checks for prod sgx_agm (enums, formats, LLM-output consistency, SIAS ordering, timestamps)",
+                "validation_type": "SGX AGM Guard",
+                "rules": "enums, format, consistency, sias, freshness -- see /api/validation/run/sgx-agm-guard"
             }
         ]
         
@@ -354,6 +361,90 @@ async def run_single_sgx_reit_guard_group(group_name: str, _: None = Depends(ver
         print(f"❌ [API] Error running SGX REIT guard group '{group_name}': {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+
+@validation_router.post("/run/sgx-agm-guard")
+async def run_sgx_agm_guard(_: None = Depends(verify_bearer_token)):
+    """Run all whole-table invariant checks against prod sgx_agm"""
+    try:
+        print("🔍 [API] Running SGX AGM guard (all groups)")
+
+        validator = SgxAgmGuardValidator()
+        result = await validator.validate()
+
+        print(f"✅ [API] SGX AGM guard completed - Status: {result.get('status')}, Anomalies: {result.get('anomalies_count', 0)}")
+
+        try:
+            supabase = get_supabase_client()
+            storage_result = {
+                "table_name": "sgx_agm_guard",
+                "validation_timestamp": result.get("validation_timestamp"),
+                "status": result.get("status"),
+                "anomalies_count": result.get("anomalies_count", 0),
+                "total_rows": result.get("total_rows", 0),
+                "anomalies": json.dumps(result.get("anomalies", [])),
+                "validations_performed": result.get("validations_performed", [])
+            }
+            supabase.table("validation_results").insert(storage_result).execute()
+            print("💾 [API] SGX AGM guard results stored in database")
+        except Exception as db_error:
+            print(f"⚠️  [API] Failed to store SGX AGM guard results: {db_error}")
+
+        if result.get("anomalies_count", 0) > 0:
+            try:
+                email_helper = EmailHelper()
+                await email_helper.notify_validation_complete("sgx_agm_guard", result, send_email=True)
+                print("📧 [API] Email notification sent for SGX AGM guard anomalies")
+            except Exception as email_error:
+                print(f"⚠️  [API] Failed to send email notification: {email_error}")
+
+        return result
+
+    except Exception as e:
+        print(f"❌ [API] Error running SGX AGM guard: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@validation_router.post("/run/sgx-agm-guard/{group_name}")
+async def run_single_sgx_agm_guard_group(group_name: str, _: None = Depends(verify_bearer_token)):
+    """Run a single check group of the SGX AGM guard (e.g. enums, format, consistency, sias, freshness)"""
+    try:
+        print(f"🔍 [API] Running SGX AGM guard group: {group_name}")
+
+        validator = SgxAgmGuardValidator()
+        result = await validator.validate(only=[group_name])
+
+        print(f"✅ [API] SGX AGM guard group '{group_name}' completed - Status: {result.get('status')}, Anomalies: {result.get('anomalies_count', 0)}")
+
+        try:
+            supabase = get_supabase_client()
+            storage_result = {
+                "table_name": f"sgx_agm_guard_{group_name}",
+                "validation_timestamp": result.get("validation_timestamp"),
+                "status": result.get("status"),
+                "anomalies_count": result.get("anomalies_count", 0),
+                "total_rows": result.get("total_rows", 0),
+                "anomalies": json.dumps(result.get("anomalies", [])),
+                "validations_performed": result.get("validations_performed", [])
+            }
+            supabase.table("validation_results").insert(storage_result).execute()
+            print(f"💾 [API] SGX AGM guard group '{group_name}' results stored in database")
+        except Exception as db_error:
+            print(f"⚠️  [API] Failed to store SGX AGM guard group results: {db_error}")
+
+        if result.get("anomalies_count", 0) > 0:
+            try:
+                email_helper = EmailHelper()
+                await email_helper.notify_validation_complete("sgx_agm_guard", result, send_email=True)
+                print("📧 [API] Email notification sent for SGX AGM guard anomalies")
+            except Exception as email_error:
+                print(f"⚠️  [API] Failed to send email notification: {email_error}")
+
+        return result
+
+    except Exception as e:
+        print(f"❌ [API] Error running SGX AGM guard group '{group_name}': {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @validation_router.post("/run/{table_name}")
 async def run_validation(
@@ -781,7 +872,7 @@ async def get_dashboard_stats():
             "idx_filings", "idx_stock_split", "idx_agm", "idx_news", "sgx_company_report", "sgx_manual_input", 
             "idx_company_profile", "idx_sector_reports",
             "idx_financial_sheets_annual", "idx_financial_sheets_quarterly", "sgx_filings", "rpc_functions",
-            "sgx_reit_guard"
+            "sgx_reit_guard", "sgx_agm_guard"
         ]
         total_tables = len(all_tables)
         
@@ -1079,6 +1170,15 @@ async def get_table_validation_config(table_name: str):
                 "description": "Whole-database invariant checks for prod SGX REIT tables",
                 "rules": {
                     "groups": ["scale", "enums", "sums", "keys", "nulls", "tallies", "coverage", "segments"],
+                    "alert_condition": "any group check fails"
+                }
+            },
+            "sgx_agm_guard": {
+                "table_name": table_name,
+                "validation_type": "SGX AGM Guard",
+                "description": "Whole-table invariant checks for prod sgx_agm",
+                "rules": {
+                    "groups": ["enums", "format", "consistency", "sias", "freshness"],
                     "alert_condition": "any group check fails"
                 }
             }
