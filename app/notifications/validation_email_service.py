@@ -8,7 +8,7 @@ import boto3
 import logging
 import time
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Any, Optional
 from io import BytesIO
 from email.mime.base import MIMEBase
@@ -56,14 +56,26 @@ class ValidationEmailService:
         self.active_tasks = {}
     
     async def send_validation_alert(self, table_name: str, validation_results: Dict[str, Any], 
-                                  recipient_emails: List[str] = None, json_file_path: str = None) -> bool:
-        """Send validation alert email with rich HTML template and JSON attachment"""
+                                  recipient_emails: List[str] = None, json_file_path: str = None,
+                                  force: bool = False) -> bool:
+        """Send validation alert email with rich HTML template and JSON attachment.
+
+        Repeat alerts for the same table are suppressed within ALERT_COOLDOWN_HOURS
+        (default 24h). Pass force=True, or explicit recipient_emails (e.g. tests),
+        to bypass the cooldown.
+        """
         try:
+            explicit_recipients = bool(recipient_emails)
             if not recipient_emails:
                 recipient_emails = await self._get_email_recipients(table_name)
             
             if not recipient_emails:
                 logger.warning(f"No email recipients configured for table: {table_name}")
+                return False
+            
+            # Cooldown: skip if this table was already alerted within the window
+            if not (force or explicit_recipients) and not self._cooldown_elapsed(table_name):
+                logger.info(f"Cooldown active for {table_name}; skipping duplicate alert")
                 return False
             
             # Generate email content
@@ -77,6 +89,7 @@ class ValidationEmailService:
                 else:
                     logger.error(f"Failed to send validation alert to {recipient_email}")
             
+            self._log_alert_sent(recipient_emails, subject)
             return True
             
         except Exception as e:
@@ -1126,6 +1139,37 @@ class ValidationEmailService:
         if recipients_str:
             return [email.strip() for email in recipients_str.split(",") if email.strip()]
         return []
+
+    def _cooldown_elapsed(self, table_name: str) -> bool:
+        """True if no alert for table_name was sent within ALERT_COOLDOWN_HOURS."""
+        try:
+            hours = int(os.getenv("ALERT_COOLDOWN_HOURS", "24"))
+        except ValueError:
+            hours = 24
+        if hours <= 0:
+            return True
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+        safe_table = table_name.replace("\\", "\\\\").replace("_", "\\_").replace("%", "\\%")
+        try:
+            resp = (self.supabase.table("email_logs").select("id")
+                    .eq("status", "sent").gte("sent_at", cutoff)
+                    .like("subject", f"Sectors Guard Alert: {safe_table} -%")
+                    .limit(1).execute())
+            return not resp.data
+        except Exception as e:
+            logger.warning(f"Cooldown check failed for {table_name}, sending anyway: {e}")
+            return True
+
+    def _log_alert_sent(self, recipients: List[str], subject: str) -> None:
+        """Record a sent alert in email_logs for cooldown tracking."""
+        try:
+            self.supabase.table("email_logs").insert({
+                "recipients": recipients,
+                "subject": subject,
+                "status": "sent",
+            }).execute()
+        except Exception as e:
+            logger.warning(f"Failed to log sent alert: {e}")
 
 # Global email service instance
 validation_email_service = ValidationEmailService()
