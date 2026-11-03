@@ -12,7 +12,7 @@ MEETING_TYPE = {"AGM", "EGM"}
 PLACE_DESC = {"Onsite", "Hybrid", "Online"}
 TAGS = {"dividend", "financial reporting and profit allocation", "board and management",
         "capital and equity", "corporate governance", "acquisitions and disposals"}
-SYMBOL_RE = re.compile(r"^[A-Z0-9]{3,4}$")
+SYMBOL_RE = re.compile(r"^[A-Z0-9]{3,4}\.SI$")
 SOURCE_PREFIX = "https://links.sgx.com/1.0.0/corporate-announcements/"
 
 
@@ -109,10 +109,10 @@ class SgxAgmGuardValidator:
         bad = sorted({r["symbol"] for r in rows if not SYMBOL_RE.match(r.get("symbol") or "")})
         if bad:
             self._add(FAIL, g, "symbol",
-                      f"{len(bad)} symbols not matching the 3-4 char uppercase alnum pattern: "
+                      f"{len(bad)} symbols not matching the 3-4 char uppercase alnum + .SI pattern: "
                       + ", ".join(repr(v) for v in bad[:6]))
         else:
-            self._ok(g, "symbol", f"{len({r['symbol'] for r in rows})} distinct, all 3-4 char uppercase alnum")
+            self._ok(g, "symbol", f"{len({r['symbol'] for r in rows})} distinct, all 3-4 char uppercase alnum + .SI")
 
         bad_rows = [r for r in rows if not (r.get("source_link") or "").startswith(SOURCE_PREFIX)]
         if bad_rows:
